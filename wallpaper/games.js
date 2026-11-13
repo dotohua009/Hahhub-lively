@@ -24,7 +24,7 @@ const keyGames = (() => {
   function press(code) {
     if(!KEYS.some(k=>k.code===code))return 0;
     if(mode===6){plants.set(code,Math.min(8,(plants.get(code)||0)+1));hits++;return 1;}
-    if(mode===7){const c=cracks.get(code)||{code,damage:0,seed:Math.random()*Math.PI*2};c.damage=Math.min(8,c.damage+1);c.peak=c.damage;c.lastHit=time;cracks.set(code,c);hits++;return 1;}
+    if(mode===7){const c=cracks.get(code)||{code,damage:0,seed:Math.random()*Math.PI*2,strikes:[]};c.damage=Math.min(8,c.damage+1);c.peak=c.damage;c.lastHit=time;const strike=keySurfaces.fracture((Math.random()*0xffffffff)>>>0,c.damage);if(c.strikes.length<8)c.strikes.push(strike);else c.strikes[1+hits%7]=strike;cracks.set(code,c);hits++;return 1;}
     if(mode!==4&&mode!==5)return 0;
     const i=targets.findIndex(t=>t.code===code&&time<=t.end&&(mode===4||Math.abs(time-t.due)<=240));
     if(i<0){combo=0;return 0;}
@@ -32,6 +32,6 @@ const keyGames = (() => {
     targets.splice(i,1);hits++;combo++;return perfect?2:1;
   }
   function release(code) {const c=cracks.get(code);if(c)c.lastHit=time;}
-  return {reset,step,press,release,get state(){return {mode,time,hits,misses,combo,targets:targets.map(t=>({...t})),plants:[...plants],cracks:[...cracks.values()].map(c=>({...c}))};}};
+  return {reset,step,press,release,get state(){return {mode,time,hits,misses,combo,targets:targets.map(t=>({...t})),plants:[...plants],cracks:[...cracks.values()].map(c=>({...c,strikes:[...c.strikes]}))};}};
 })();
 if(typeof module!=='undefined')module.exports=keyGames;

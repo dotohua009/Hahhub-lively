@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
+const root=path.join(__dirname,'../wallpaper');
+const props=JSON.parse(fs.readFileSync(path.join(root,'LivelyProperties.json'),'utf8'));
+const defaults=vm.runInNewContext(fs.readFileSync(path.join(root,'defaults.js'),'utf8')+';KEYBLOOM_DEFAULTS');
+for(const [key,p] of Object.entries(props))if(!['label','button'].includes(p.type))assert.equal(defaults[key],p.value,`${key}: browser/native defaults match`);
+for(const [key,value] of Object.entries({effect:7,splashRange:270,splashSpeed:200,holdDelay:40,repeatInterval:210,background:5,backgroundColor:'#FFFFFF',brightness:0,fps:60,keyLight:100,gameSpeed:115,glassRepair:12000,strength:100,duration:3700,labels:false,calibration:false,shiftX:0,shiftY:0,scaleX:100,scaleY:100}))assert.equal(defaults[key],value,`${key}: calibrated defaults retained`);
+const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
+for(const match of html.matchAll(/src="([^"]+)"/g))assert(fs.existsSync(path.join(root,match[1])),match[1]);
+assert(!fs.existsSync(path.join(root,'ScreenPower.cs')),'unverified monitor power code excluded');
+console.log('PASS: calibrated defaults, matching native/browser settings, script dependencies, no unverified power code');

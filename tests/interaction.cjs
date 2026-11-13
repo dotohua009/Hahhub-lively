@@ -14,7 +14,7 @@ async (page) => {
   const state=()=>page.evaluate(()=>keyBloom.state);
   const tick=ms=>page.evaluate(ms=>advance(ms),ms);
   const mode=m=>page.evaluate(m=>livelyPropertyListener('effect',m),m);
-  await mode(2);await page.evaluate(()=>{livelyPropertyListener('fps',15);livelyPropertyListener('brightness',0);livelyPropertyListener('keyLight',0);});await tick(1000);
+  await mode(2);await page.evaluate(()=>{livelyPropertyListener('splashRange',200);livelyPropertyListener('splashSpeed',300);livelyPropertyListener('fps',15);livelyPropertyListener('brightness',0);livelyPropertyListener('keyLight',0);});await tick(1000);
   const idleFrames=(await state()).frameCount;await page.keyboard.down('h');await tick(16);
   assert((await state()).frameCount===idleFrames+1,'first input paints on next frame even at 15 FPS');await page.keyboard.up('h');
   const radius=()=>page.evaluate(()=>{const ctx=document.querySelector('canvas').getContext('2d'),b=keyBloom.box(keyBloom.keys.find(k=>k.code==='KeyH')),data=ctx.getImageData(0,0,innerWidth,innerHeight).data;let r=0;for(let y=0;y<innerHeight;y++)for(let x=0;x<innerWidth;x++){const i=(y*innerWidth+x)*4;if(Math.max(data[i],data[i+1],data[i+2])>40)r=Math.max(r,Math.hypot(x-b.cx,y-b.cy));}return r/Math.min(b.w,b.h);});
@@ -41,7 +41,7 @@ async (page) => {
   await page.evaluate(()=>{for(const [name,value] of Object.entries({splashRange:200,splashSpeed:300,holdDelay:180,repeatInterval:120}))livelyPropertyListener(name,value);});
   await page.evaluate(()=>{livelyPropertyListener('fps',30);livelyPropertyListener('brightness',100);livelyPropertyListener('keyLight',85);});
   const counts=[];
-  for(let m=0;m<8;m++){
+  for(let m=0;m<9;m++){
     await mode(m);const before=(await state()).received;
     await page.keyboard.down('a');assert((await state()).received===before+1,`mode ${m}: tap immediate`);
     await tick(100);await page.keyboard.up('a');await tick(600);

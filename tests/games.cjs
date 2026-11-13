@@ -1,5 +1,6 @@
 const assert=require('node:assert/strict');
 global.KEYS=require('../wallpaper/layout.js').KEYS;
+global.keySurfaces=require('../wallpaper/surfaces.js');
 const game=require('../wallpaper/games.js');
 const advance=ms=>{while(ms>0){const d=Math.min(ms,100);game.step(d);ms-=d;}};
 game.reset(4);game.step(0);
