@@ -23,6 +23,22 @@ async (page) => {
   const movingFrames=(await state()).frameCount;await page.keyboard.press('j');await tick(16);
   assert((await state()).frameCount===movingFrames+1,'new input also bypasses limit during animation');
   const inputFrames=(await state()).frameCount;await tick(500);assert((await state()).frameCount-inputFrames<=8,'continuing animation still honors 15 FPS');
+  const measureSplash=async(range,speed)=>{await mode(2);await page.evaluate(({range,speed})=>{livelyPropertyListener('fps',60);livelyPropertyListener('splashRange',range);livelyPropertyListener('splashSpeed',speed);},{range,speed});await page.keyboard.press('h');await tick(200);return radius();};
+  const small=await measureSplash(75,300),large=await measureSplash(300,300);
+  assert(large>small*3,'range slider changes rendered splash radius');
+  const slow=await measureSplash(200,50),fast=await measureSplash(200,300);
+  assert(fast>slow*2,'speed slider accelerates rendered expansion');
+  await mode(2);await page.evaluate(()=>{livelyPropertyListener('holdDelay',600);livelyPropertyListener('repeatInterval',200);});
+  const customBefore=(await state()).received;await page.keyboard.down('a');await tick(500);
+  assert((await state()).received===customBefore+1,'custom delay keeps first tap immediate but waits to repeat');
+  await tick(200);assert((await state()).received===customBefore+2,'custom hold delay starts repeat');
+  await tick(400);assert((await state()).received===customBefore+4,'custom interval controls repeat frequency');await page.keyboard.up('a');
+  for(const [name,min,max] of [['splashRange',50,400],['splashSpeed',50,400],['holdDelay',0,1000],['repeatInterval',40,500]]){
+    await page.evaluate(name=>livelyPropertyListener(name,-1000),name);assert((await state()).settings[name]===min,`${name} lower bound`);
+    await page.evaluate(name=>livelyPropertyListener(name,10000),name);assert((await state()).settings[name]===max,`${name} upper bound`);
+    await page.evaluate(name=>livelyPropertyListener(name,'invalid'),name);assert((await state()).settings[name]===max,`${name} rejects invalid value`);
+  }
+  await page.evaluate(()=>{for(const [name,value] of Object.entries({splashRange:200,splashSpeed:300,holdDelay:180,repeatInterval:120}))livelyPropertyListener(name,value);});
   await page.evaluate(()=>{livelyPropertyListener('fps',30);livelyPropertyListener('brightness',100);livelyPropertyListener('keyLight',85);});
   const counts=[];
   for(let m=0;m<8;m++){
@@ -70,9 +86,9 @@ async (page) => {
     await mode(m);await tick(40);const code=(await state()).game.targets[0].code;
     await page.keyboard.down(code);await tick(1900);assert((await state()).game.hits>=1,`mode ${m}: held key hits target`);await page.keyboard.up(code);
   }
-  await mode(0);await page.evaluate(()=>{for(const k of keyBloom.keys)keyBloom.key(k.code,true);advance(3000);});
+  await mode(0);await page.evaluate(()=>{livelyPropertyListener('holdDelay',0);livelyPropertyListener('repeatInterval',40);for(const k of keyBloom.keys)keyBloom.key(k.code,true);advance(3000);});
   assert((await state()).eventCount<=96,'simultaneous holds preserve event cap');
   await page.evaluate(()=>dispatchEvent(new Event('blur')));
   assert(errors.length===0,errors.join(';'));
-  return {pass:true,counts,earlyRadius,wideRadius,checks:'next-frame input, wide splash, FPS limit, tap, hold, OS repeat, release, multi-key, 16s modifier, pause, blur, hidden, clear, mode switch, game hits, plant cap, glass damage and repair, event cap',errors};
+  return {pass:true,counts,earlyRadius,wideRadius,sliders:{small,large,slow,fast},checks:'live range/speed pixels, custom hold timing, parameter bounds, next-frame input, FPS limit, tap, hold, OS repeat, release, multi-key, 16s modifier, pause, blur, hidden, clear, mode switch, game hits, plant cap, glass damage and repair, fastest-repeat event cap',errors};
 }

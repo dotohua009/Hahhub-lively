@@ -2,14 +2,14 @@
   'use strict';
   const canvas=document.getElementById('screen'),ctx=canvas.getContext('2d'),byCode=new Map(KEYS.map(k=>[k.code,k]));
   // Runs inside Lively Wallpaper: https://github.com/lively-community/lively
-  const settings={effect:0,background:0,backgroundColor:'#ffffff',brightness:100,fps:30,keyLight:85,gameSpeed:100,glassRepair:12000,strength:100,duration:2600,labels:false,calibration:false,shiftX:0,shiftY:0,scaleX:100,scaleY:100};
+  const settings={effect:0,splashRange:200,splashSpeed:300,holdDelay:180,repeatInterval:120,background:0,backgroundColor:'#ffffff',brightness:100,fps:30,keyLight:85,gameSpeed:100,glassRepair:12000,strength:100,duration:2600,labels:false,calibration:false,shiftX:0,shiftY:0,scaleX:100,scaleY:100};
   let W=innerWidth,H=innerHeight,events=[],held=new Map(),lastPress=null,lastFrame=0,received=0,frameCount=0,raf=0,inputPending=false;
   const TAU=Math.PI*2,clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
   function box(k){const t=CALIBRATION.transform,v=CALIBRATION.viewport,sx=W/v.width,sy=H/v.height,px=t.px*sx*settings.scaleX/100,py=t.py*sy*settings.scaleY/100,cx=(t.x+8*t.px)*sx+settings.shiftX*W/1920,cy=(t.y+3*t.py)*sy+settings.shiftY*H/720;return{x:cx+(k.x-8)*px,y:cy+(k.y-3)*py,w:k.w*px,h:py,cx:cx+(k.cx-8)*px,cy:cy+(k.cy-3)*py};}
   function wake(){if(!raf&&!document.hidden){lastFrame=performance.now();raf=requestAnimationFrame(frame);}}
   function resize(){W=innerWidth;H=innerHeight;canvas.width=W;canvas.height=H;wake();}
   function trigger(code,time=performance.now()){if(!byCode.has(code))return false;const previous=lastPress&&time-lastPress.time>=0&&time-lastPress.time<1000&&lastPress.code!==code?lastPress.code:null;events.push({code,start:time,previous,seed:Math.random()*TAU,hit:keyGames.press(code)});if(events.length>96)events.shift();lastPress={code,time};received++;inputPending=true;wake();return true;}
-  function key(code,down,time=performance.now()){if(!byCode.has(code))return;if(down){if(!held.has(code)){held.set(code,time+180);trigger(code,time);}}else if(held.delete(code))keyGames.release(code);}
+  function key(code,down,time=performance.now()){if(!byCode.has(code))return;if(down){if(!held.has(code)){held.set(code,time+settings.holdDelay);trigger(code,time);}}else if(held.delete(code))keyGames.release(code);}
   function releaseAll(){for(const code of held.keys())key(code,false);}
   function isLight(){if(settings.background===5){const c=settings.backgroundColor;return (.299*parseInt(c.slice(1,3),16)+.587*parseInt(c.slice(3,5),16)+.114*parseInt(c.slice(5,7),16))*settings.brightness/100>115;}return settings.background<2&&settings.brightness>45;}
   function color(k,a=1,shift=0){return `hsla(${(182+k.cx*10+k.y*6+shift)%360},82%,${isLight()?43:66}%,${clamp(a,0,1)})`;}
@@ -33,7 +33,7 @@
     glow(k,b.cx,b.cy,p*.65,fade);for(let i=0;i<4;i++){const a=age-i*.14;if(a<0)continue;const r=p*(.06+a*.85);ctx.strokeStyle=color(k,fade*(1-i*.16),i*9);ctx.lineWidth=(3.6-i*.65)*(W/1920);ctx.beginPath();ctx.ellipse(b.cx,b.cy,r,r,0,0,TAU);ctx.stroke();}
   }
   function particles(k,b,e,age,fade,p){
-    glow(k,b.cx,b.cy,p*.5,fade*.6);ctx.lineCap='round';for(let i=0;i<30;i++){const angle=i*2.399963+e.seed,speed=p*(.45+(i%7)*.17)*2,drag=1-Math.exp(-age*4.5),x=b.cx+Math.cos(angle)*speed*drag,y=b.cy+Math.sin(angle)*speed*drag+age*age*p*.13,len=p*.06*(1-age/3);ctx.strokeStyle=color(k,fade,((i*17)%70)-35);ctx.lineWidth=2+(i%3);ctx.beginPath();ctx.moveTo(x-Math.cos(angle)*len,y-Math.sin(angle)*len);ctx.lineTo(x,y);ctx.stroke();ctx.fillStyle=color(k,fade*.75);ctx.beginPath();ctx.arc(x,y,1.4+(i%3)*.6,0,TAU);ctx.fill();}
+    glow(k,b.cx,b.cy,p*.5,fade*.6);ctx.lineCap='round';for(let i=0;i<30;i++){const angle=i*2.399963+e.seed,speed=p*(.45+(i%7)*.17)*settings.splashRange/100,drag=1-Math.exp(-age*1.5*settings.splashSpeed/100),x=b.cx+Math.cos(angle)*speed*drag,y=b.cy+Math.sin(angle)*speed*drag+age*age*p*.13,len=p*.06*(1-age/3);ctx.strokeStyle=color(k,fade,((i*17)%70)-35);ctx.lineWidth=2+(i%3);ctx.beginPath();ctx.moveTo(x-Math.cos(angle)*len,y-Math.sin(angle)*len);ctx.lineTo(x,y);ctx.stroke();ctx.fillStyle=color(k,fade*.75);ctx.beginPath();ctx.arc(x,y,1.4+(i%3)*.6,0,TAU);ctx.fill();}
   }
   function connection(k,b,e,age,fade,p){
     glow(k,b.cx,b.cy,p*.6,fade);ctx.lineWidth=2;ctx.strokeStyle=color(k,fade*.9);ctx.beginPath();ctx.arc(b.cx,b.cy,p*(.12+.12*Math.min(age,1)),0,TAU);ctx.stroke();
@@ -117,7 +117,7 @@
   // New input paints on the next display frame; continuing animation keeps the FPS limit.
   function frame(now){if(!inputPending&&now-lastFrame<1000/settings.fps-1){raf=requestAnimationFrame(frame);return;}keyGames.step(Math.min(100,now-lastFrame)*(settings.effect===4||settings.effect===5?settings.gameSpeed/100:1),settings.glassRepair);lastFrame=now;frameCount++;events=events.filter(e=>now-e.start<settings.duration);
     // Schedule from this frame so a paused wallpaper never catches up with a burst.
-    for(const [code,next] of held){if(now>=next){trigger(code,now);held.set(code,now+120);}}
+    for(const [code,next] of held){if(now>=next){trigger(code,now);held.set(code,now+settings.repeatInterval);}}
     inputPending=false;draw(now);
     const movingBackground=settings.brightness>0&&settings.background>=1&&settings.background<=4;
     const movingGame=settings.effect===4||settings.effect===5||(settings.effect===7&&keyGames.state.cracks.length>0);
@@ -132,7 +132,7 @@
     if(name==='backgroundColor'){if(typeof value==='string'&&/^#[0-9a-f]{6}$/i.test(value))settings.backgroundColor=value;return;}
     if(name==='demo'){const now=performance.now();lastPress=null;if(settings.effect===4||settings.effect===5){keyGames.reset(settings.effect);keyGames.step(0);return;}['KeyQ','KeyW','KeyE','KeyR','KeyT','KeyY','KeyU','KeyI','KeyO','KeyP','Enter','Space'].forEach((code,i)=>{for(let j=0;j<(settings.effect===6?5:1);j++)trigger(code,now+i*100);});return;}
     if(name==='clear'){events=[];held.clear();lastPress=null;keyGames.reset(settings.effect);return;}
-    const ranges={effect:[0,7],background:[0,5],brightness:[0,100],fps:[15,60],keyLight:[0,100],gameSpeed:[50,180],glassRepair:[3000,30000],strength:[10,100],duration:[600,6000],shiftX:[-200,200],shiftY:[-100,100],scaleX:[80,120],scaleY:[80,120]};
+    const ranges={effect:[0,7],splashRange:[50,400],splashSpeed:[50,400],holdDelay:[0,1000],repeatInterval:[40,500],background:[0,5],brightness:[0,100],fps:[15,60],keyLight:[0,100],gameSpeed:[50,180],glassRepair:[3000,30000],strength:[10,100],duration:[600,6000],shiftX:[-200,200],shiftY:[-100,100],scaleX:[80,120],scaleY:[80,120]};
     if(!(name in ranges)||!Number.isFinite(Number(value)))return;settings[name]=clamp(Number(value),...ranges[name]);if(name==='background')settings.background=Math.round(settings.background);if(name==='effect'){settings.effect=Math.round(settings.effect);events=[];held.clear();lastPress=null;keyGames.reset(settings.effect);}
   };
   window.keyBloom={keys:KEYS,box,trigger,key,draw,get state(){return{viewport:{width:W,height:H},settings:{...settings},received,eventCount:events.length,active:[...held.keys()],frameCount,animating:!!raf,game:keyGames.state};}};

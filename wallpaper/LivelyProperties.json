@@ -1,5 +1,9 @@
 {
   "effect":{"type":"dropdown","text":"按键动画 / 视觉游戏","value":0,"items":["花纹绽放","水波扩散","粒子喷溅","流光连线","打地鼠","节奏接球","像素生长","玻璃裂纹 · 自动修复"]},
+  "splashRange":{"type":"slider","text":"溅射范围（%）","value":200,"min":50,"max":400,"step":10},
+  "splashSpeed":{"type":"slider","text":"溅射扩散速度（%，越大越快）","value":300,"min":50,"max":400,"step":10},
+  "holdDelay":{"type":"slider","text":"长按起步等待（毫秒，越小越快）","value":180,"min":0,"max":1000,"step":20},
+  "repeatInterval":{"type":"slider","text":"长按连发间隔（毫秒，越小越快）","value":120,"min":40,"max":500,"step":10},
   "background":{"type":"dropdown","text":"背景风格","value":0,"items":["纯白亮底","柔彩流动","深色极光","漫游星空","像素网格","自选纯色"]},
   "backgroundColor":{"type":"color","text":"自选纯色的颜色","value":"#ffffff"},
   "brightness":{"type":"slider","text":"背景亮度","value":100,"min":0,"max":100,"step":1},
