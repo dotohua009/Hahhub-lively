@@ -1,0 +1,6 @@
+dist/
+.playwright-cli/
+wallpaper/KeyBloomInput.exe
+wallpaper/bridge-*.json
+node_modules/
+*.log
