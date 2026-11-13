@@ -6,16 +6,17 @@
 
 - [Lively 官方下载](https://github.com/lively-community/lively/releases)
 - [Lively 源码与 GPL-3.0 许可](https://github.com/lively-community/lively)
-- [下载可直接导入的壁纸 ZIP](downloads/KeyBloom-IPI84-v1.1.0.zip)
+- [下载可直接导入的壁纸 ZIP](downloads/KeyBloom-IPI84-v1.1.1.zip)
 
 ![暗背景下的按键照明](docs/dark-key-light.png)
 
 ## 能做什么
 
+- v1.1.1：粒子喷溅半径扩大约一倍、扩散更快；新按键在下一显示帧优先绘制。连续动画仍受帧率上限控制，空闲停绘。
 - 八种互动：花纹绽放、水波扩散、粒子喷溅、流光连线、打地鼠、节奏接球、像素生长、可修复玻璃裂纹。
 - 六种背景：纯白、柔彩、极光、星空、网格、自选纯色。背景亮度调为 0 即为纯黑。
 - 暗背景按键中心有白蓝色亮光，“暗背景键帽照明”可调至 0–100。背景与照明分开控制。
-- 点按一次触发一次；长按约 350 毫秒后每 240 毫秒继续触发。玻璃裂纹按住时加深，松开 1.6 秒后缓慢修复。
+- 点按一次触发一次；长按约 180 毫秒后每 120 毫秒继续触发。玻璃裂纹按住时加深，松开 1.6 秒后缓慢修复。
 - IPI 84 的 16u × 6 行实体布局，保留中心缩放与四边出界校准。
 - 默认不显示键名、注释、分数或提示。
 
@@ -24,7 +25,7 @@
 适用于 Windows x64。已在 Lively 2.2.1.0 的 WebView2 网页播放器上验证。
 
 1. 从上面的官方链接安装 Lively。将键盘屏设置为 Windows 扩展显示器。
-2. 下载本项目的 `KeyBloom-IPI84-v1.1.0.zip`，直接拖入 Lively 图库。不要先解压。
+2. 下载本项目的 `KeyBloom-IPI84-v1.1.1.zip`，直接拖入 Lively 图库。不要先解压。
 3. 在 Lively 中选择实际键盘屏，再应用“键下生花 · IPI 84”。显示器编号因电脑而异。
 4. 点壁纸的“…” → “打开文件所在位置”，在这个**已导入的壁纸库目录**中运行 `KeyBloomInput.exe`。
 5. 将 Lively 输入转发设为“鼠标和键盘”。在其他窗口按 W、A、空格、方向键，检查对应位置。
@@ -61,7 +62,7 @@ Windows 上使用自带的 .NET Framework C# 编译器构建输入组件并打�
 pwsh -File scripts/build.ps1
 ```
 
-输出 `dist/KeyBloom-IPI84-v1.1.0.zip`。也可用 Windows PowerShell 5.1 运行该脚本。构建只使用本地源文件和系统编译器，不下载依赖。
+输出 `dist/KeyBloom-IPI84-v1.1.1.zip`。也可用 Windows PowerShell 5.1 运行该脚本。构建只使用本地源文件和系统编译器，不下载依赖。
 
 测试游戏逻辑（Node.js）：
 

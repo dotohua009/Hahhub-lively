@@ -14,23 +14,34 @@ async (page) => {
   const state=()=>page.evaluate(()=>keyBloom.state);
   const tick=ms=>page.evaluate(ms=>advance(ms),ms);
   const mode=m=>page.evaluate(m=>livelyPropertyListener('effect',m),m);
+  await mode(2);await page.evaluate(()=>{livelyPropertyListener('fps',15);livelyPropertyListener('brightness',0);livelyPropertyListener('keyLight',0);});await tick(1000);
+  const idleFrames=(await state()).frameCount;await page.keyboard.down('h');await tick(16);
+  assert((await state()).frameCount===idleFrames+1,'first input paints on next frame even at 15 FPS');await page.keyboard.up('h');
+  const radius=()=>page.evaluate(()=>{const ctx=document.querySelector('canvas').getContext('2d'),b=keyBloom.box(keyBloom.keys.find(k=>k.code==='KeyH')),data=ctx.getImageData(0,0,innerWidth,innerHeight).data;let r=0;for(let y=0;y<innerHeight;y++)for(let x=0;x<innerWidth;x++){const i=(y*innerWidth+x)*4;if(Math.max(data[i],data[i+1],data[i+2])>40)r=Math.max(r,Math.hypot(x-b.cx,y-b.cy));}return r/Math.min(b.w,b.h);});
+  await tick(84);const earlyRadius=await radius();assert(earlyRadius>.85,'splash reaches neighboring key within 100 ms');
+  await tick(500);const wideRadius=await radius();assert(wideRadius>2.3,'splash covers multiple key widths');
+  const movingFrames=(await state()).frameCount;await page.keyboard.press('j');await tick(16);
+  assert((await state()).frameCount===movingFrames+1,'new input also bypasses limit during animation');
+  const inputFrames=(await state()).frameCount;await tick(500);assert((await state()).frameCount-inputFrames<=8,'continuing animation still honors 15 FPS');
+  await page.evaluate(()=>{livelyPropertyListener('fps',30);livelyPropertyListener('brightness',100);livelyPropertyListener('keyLight',85);});
   const counts=[];
   for(let m=0;m<8;m++){
     await mode(m);const before=(await state()).received;
     await page.keyboard.down('a');assert((await state()).received===before+1,`mode ${m}: tap immediate`);
     await tick(100);await page.keyboard.up('a');await tick(600);
     assert((await state()).received===before+1,`mode ${m}: tap single effect`);
-    await page.keyboard.down('a');await page.keyboard.down('a');await tick(340);
+    await page.keyboard.down('a');await page.keyboard.down('a');await tick(140);
     assert((await state()).received===before+2,`mode ${m}: repeat keydown deduplicated`);
-    await tick(680);let s=await state();assert(s.received===before+5,`mode ${m}: hold repeats on its own`);
+    await tick(100);assert((await state()).received===before+3,`mode ${m}: hold starts within 240 ms`);
+    await tick(600);let s=await state();assert(s.received===before+8,`mode ${m}: hold repeats every 120 ms`);
     await page.keyboard.up('a');await tick(1000);
     assert((await state()).received===s.received,`mode ${m}: release stops repeats`);
     counts.push({effect:m,events:s.received-before});
   }
   await mode(1);await page.keyboard.down('a');await page.keyboard.down('s');await tick(1000);
   assert((await state()).active.length===2,'multi-key hold');
-  await page.keyboard.up('a');let before=(await state()).received;await tick(1000);
-  assert((await state()).received-before===4,'released key stops while other key repeats');await page.keyboard.up('s');
+  await page.keyboard.up('a');let before=(await state()).received;await tick(840);
+  assert((await state()).received-before===7,'released key stops while other key repeats');await page.keyboard.up('s');
   await page.keyboard.down('Shift');await tick(16000);
   assert((await state()).active.includes('ShiftLeft'),'non-repeating modifier holds beyond 15 seconds');await page.keyboard.up('Shift');
   await page.keyboard.down('a');before=(await state()).received;
@@ -63,5 +74,5 @@ async (page) => {
   assert((await state()).eventCount<=96,'simultaneous holds preserve event cap');
   await page.evaluate(()=>dispatchEvent(new Event('blur')));
   assert(errors.length===0,errors.join(';'));
-  return {pass:true,counts,checks:'tap, hold, OS repeat, release, multi-key, 16s modifier, pause, blur, hidden, clear, mode switch, game hits, plant cap, glass damage and repair, event cap',errors};
+  return {pass:true,counts,earlyRadius,wideRadius,checks:'next-frame input, wide splash, FPS limit, tap, hold, OS repeat, release, multi-key, 16s modifier, pause, blur, hidden, clear, mode switch, game hits, plant cap, glass damage and repair, event cap',errors};
 }
