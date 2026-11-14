@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using System.Collections.Generic;
 
 // Only forwards transient key transitions to this wallpaper's WebView2 window.
 // No text conversion, key history, file logging of input, or network listener.
@@ -18,6 +19,11 @@ internal sealed class KeyBloomInput : NativeWindow, IDisposable
     IntPtr target;
     uint targetPid;
     bool registered;
+    bool sessionLocked;
+    readonly Dictionary<ushort,Keyboard> pressed=new Dictionary<ushort,Keyboard>();
+    readonly System.Windows.Forms.Timer releaseTimer=new System.Windows.Forms.Timer();
+    Process sleepWorker;
+    DateTime nextSleepStart=DateTime.MinValue;
     long count;
     DateTime lastStatus=DateTime.MinValue;
     [StructLayout(LayoutKind.Sequential)] struct Device { public ushort page, usage; public uint flags; public IntPtr hwnd; }
@@ -38,6 +44,27 @@ internal sealed class KeyBloomInput : NativeWindow, IDisposable
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd,out Rect rect);
     [DllImport("user32.dll")] static extern bool GetCursorPos(out Point point);
+    [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
+    [DllImport("user32.dll")] static extern IntPtr OpenInputDesktop(uint flags,bool inherit,uint access);
+    [DllImport("user32.dll")] static extern bool CloseDesktop(IntPtr desktop);
+    [DllImport("wtsapi32.dll")] static extern bool WTSRegisterSessionNotification(IntPtr hwnd,uint flags);
+    [DllImport("wtsapi32.dll")] static extern bool WTSUnRegisterSessionNotification(IntPtr hwnd);
+
+    void ReleasePressed(bool all)
+    {
+        foreach(var entry in new List<KeyValuePair<ushort,Keyboard>>(pressed)){
+            if(!all&&(GetAsyncKeyState(entry.Key)&0x8000)!=0)continue;
+            PostMessage(target,0x101,new IntPtr(entry.Key),KeyFlags(entry.Value.scan,entry.Value.flags,false));pressed.Remove(entry.Key);
+        }
+        if(all&&target!=IntPtr.Zero)PostMessage(target,0x8,IntPtr.Zero,IntPtr.Zero);
+    }
+    void CheckRelease()
+    {
+        if(pressed.Count==0)return;
+        IntPtr desktop=OpenInputDesktop(0,false,0x100);
+        if(desktop==IntPtr.Zero){ReleasePressed(true);return;}
+        CloseDesktop(desktop);ReleasePressed(sessionLocked);
+    }
 
     static IntPtr FindTarget(string folder)
     {
@@ -76,22 +103,30 @@ internal sealed class KeyBloomInput : NativeWindow, IDisposable
         if(stop.WaitOne(0)){Application.ExitThread();return;}
         try {
             uint pid;
-            if(target==IntPtr.Zero||!IsWindow(target)||GetWindowThreadProcessId(target,out pid)==0||pid!=targetPid){target=FindTarget(root);if(target!=IntPtr.Zero)GetWindowThreadProcessId(target,out targetPid);}
+            if(target==IntPtr.Zero||!IsWindow(target)||GetWindowThreadProcessId(target,out pid)==0||pid!=targetPid){ReleasePressed(true);target=FindTarget(root);if(target!=IntPtr.Zero)GetWindowThreadProcessId(target,out targetPid);}
             bool enable=target!=IntPtr.Zero;
+            if((sleepWorker==null||sleepWorker.HasExited)&&DateTime.UtcNow>=nextSleepStart&&File.Exists(Path.Combine(root,"KeyBloomSleep.exe"))){
+                if(sleepWorker!=null)sleepWorker.Dispose();
+                sleepWorker=Process.Start(new ProcessStartInfo(Path.Combine(root,"KeyBloomSleep.exe"),"--monitor "+Process.GetCurrentProcess().Id){UseShellExecute=false,CreateNoWindow=true});nextSleepStart=DateTime.UtcNow.AddSeconds(60);
+            }
             if(enable!=registered){var d=new Device{page=1,usage=6,flags=enable?0x100u:1u,hwnd=enable?Handle:IntPtr.Zero};if(RegisterRawInputDevices(new[]{d},1,(uint)Marshal.SizeOf(typeof(Device))))registered=enable;lastStatus=DateTime.MinValue;}
             if(DateTime.UtcNow-lastStatus>=TimeSpan.FromSeconds(15)){
             File.WriteAllText(Path.Combine(root,"bridge-status.json"),"{\"active\":"+(enable&&registered?"true":"false")+",\"forwardedTransitions\":"+count+",\"pid\":"+Process.GetCurrentProcess().Id+",\"utc\":\""+DateTime.UtcNow.ToString("o")+"\"}");
             lastStatus=DateTime.UtcNow;}
         } catch { target=IntPtr.Zero; }
     }
-    KeyBloomInput(string folder,EventWaitHandle stopEvent)
+    KeyBloomInput(string folder,EventWaitHandle stopEvent,bool startTimers=true)
     {
         root=folder;stop=stopEvent;CreateHandle(new CreateParams{Caption="KeyBloom Input Bridge",Parent=new IntPtr(-3)});
+        if(!startTimers)return;
+        WTSRegisterSessionNotification(Handle,0);releaseTimer.Interval=120;releaseTimer.Tick+=delegate{CheckRelease();};releaseTimer.Start();
         timer.Interval=1500;timer.Tick+=delegate{Discover();};Discover();timer.Start();
     }
     protected override void WndProc(ref Message message)
     {
-        if(message.Msg==0x00ff && target!=IntPtr.Zero && IsWindow(target) && !NativeLivelyAlreadyForwards())
+        if(message.Msg==0x02b1&&(message.WParam.ToInt32()==7||message.WParam.ToInt32()==8)){sessionLocked=message.WParam.ToInt32()==7;ReleasePressed(true);}
+        if(message.Msg==0x0218){ReleasePressed(true);}
+        if(message.Msg==0x00ff && !sessionLocked && target!=IntPtr.Zero && IsWindow(target))
         {
             uint size=0,hs=(uint)Marshal.SizeOf(typeof(Header));
             if(GetRawInputData(message.LParam,0x10000003,IntPtr.Zero,ref size,hs)==0 && size>=hs+Marshal.SizeOf(typeof(Keyboard)) && size<1024)
@@ -103,15 +138,16 @@ internal sealed class KeyBloomInput : NativeWindow, IDisposable
                         Header header=(Header)Marshal.PtrToStructure(buffer,typeof(Header));
                         if(header.type==1){Keyboard key=(Keyboard)Marshal.PtrToStructure(IntPtr.Add(buffer,(int)hs),typeof(Keyboard));if(key.vk>0 && key.vk<255){bool down=(key.flags&1)==0;
                             // WebView2 needs an internal focus notification; the OS foreground window stays unchanged.
-                            if(down)PostMessage(target,0x7,IntPtr.Zero,IntPtr.Zero);
-                            if(PostMessage(target,down?0x100u:0x101u,new IntPtr(key.vk),KeyFlags(key.scan,key.flags,down)))count++;}}
+                            if(down)pressed[key.vk]=key;else pressed.Remove(key.vk);
+                            if(!NativeLivelyAlreadyForwards()||!down){if(down)PostMessage(target,0x7,IntPtr.Zero,IntPtr.Zero);
+                            if(PostMessage(target,down?0x100u:0x101u,new IntPtr(key.vk),KeyFlags(key.scan,key.flags,down)))count++;}}}
                     }
                 } finally { Marshal.FreeHGlobal(buffer); }
             }
         }
         base.WndProc(ref message);
     }
-    public void Dispose(){timer.Dispose();if(registered)RegisterRawInputDevices(new[]{new Device{page=1,usage=6,flags=1,hwnd=IntPtr.Zero}},1,(uint)Marshal.SizeOf(typeof(Device)));DestroyHandle();}
+    public void Dispose(){ReleasePressed(true);releaseTimer.Dispose();timer.Dispose();WTSUnRegisterSessionNotification(Handle);if(registered)RegisterRawInputDevices(new[]{new Device{page=1,usage=6,flags=1,hwnd=IntPtr.Zero}},1,(uint)Marshal.SizeOf(typeof(Device)));DestroyHandle();}
     [STAThread] static int Main(string[] args)
     {
         try {
@@ -124,6 +160,14 @@ internal sealed class KeyBloomInput : NativeWindow, IDisposable
                 if(!PostMessage(h,0x100,new IntPtr(65),KeyFlags(0x1e,0,true)))throw new Exception("Key down failed");Thread.Sleep(350);PostMessage(h,0x101,new IntPtr(65),KeyFlags(0x1e,0,false));
                 if(GetForegroundWindow()!=foreground)throw new Exception("Foreground changed during test");
                 File.WriteAllText(Path.Combine(folder,"bridge-self-test.json"),"{\"targetFound\":true,\"foregroundUnchanged\":true,\"syntheticKey\":\"KeyA\",\"utc\":\""+DateTime.UtcNow.ToString("o")+"\"}");return 0;
+            }
+            if(args.Length>0 && args[0]=="--release-self-test"){
+                IntPtr h=FindTarget(folder);if(h==IntPtr.Zero)throw new Exception("Wallpaper input window not found");
+                using(var ev=new EventWaitHandle(false,EventResetMode.ManualReset))using(var bridge=new KeyBloomInput(folder,ev,false)){
+                    bridge.target=h;bridge.pressed[65]=new Keyboard{vk=65,scan=0x1e};PostMessage(h,0x7,IntPtr.Zero,IntPtr.Zero);PostMessage(h,0x100,new IntPtr(65),KeyFlags(0x1e,0,true));Thread.Sleep(80);
+                    bridge.CheckRelease();if(bridge.pressed.Count!=0)throw new Exception("Physical A must be released for this test");
+                    bridge.pressed[16]=new Keyboard{vk=16,scan=0x2a};bridge.ReleasePressed(true);if(bridge.pressed.Count!=0)throw new Exception("Session reset failed");
+                }File.WriteAllText(Path.Combine(folder,"bridge-release-test.json"),"{\"lostKeyUpRecovered\":true,\"sessionResetCleared\":true}");return 0;
             }
             bool created;using(var mutex=new Mutex(true,InstanceName,out created)){if(!created)return 0;using(var stop=new EventWaitHandle(false,EventResetMode.ManualReset,InstanceName+".Stop"))using(var bridge=new KeyBloomInput(folder,stop)){Application.Run();}mutex.ReleaseMutex();}return 0;
         } catch(Exception e){File.WriteAllText(Path.Combine(Path.GetTempPath(),"KeyBloom-input-error.txt"),e.ToString());return 1;}

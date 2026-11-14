@@ -93,11 +93,11 @@
   },
   "sectionGaps": {
     "type": "label",
-    "value": "03 · 键帽夹缝灯效（可与以上玩法叠加）"
+    "value": "03 · 轴间灯效与轴区（可与以上玩法叠加）"
   },
   "gapMode": {
     "type": "dropdown",
-    "text": "夹缝效果",
+    "text": "轴间效果",
     "value": 0,
     "items": [
       "关闭",
@@ -109,7 +109,7 @@
   },
   "gapWidth": {
     "type": "slider",
-    "text": "夹缝宽度",
+    "text": "流动光线宽度",
     "value": 10,
     "min": 2,
     "max": 30,
@@ -117,7 +117,7 @@
   },
   "gapBrightness": {
     "type": "slider",
-    "text": "夹缝亮度",
+    "text": "光流亮度",
     "value": 75,
     "min": 0,
     "max": 100,
@@ -130,6 +130,43 @@
     "min": 25,
     "max": 200,
     "step": 5
+  },
+  "axisSize": {
+    "type": "slider",
+    "text": "轴区统一尺寸（1920 宽基准像素）",
+    "value": 72,
+    "min": 20,
+    "max": 140,
+    "step": 1
+  },
+  "axisColor": {
+    "type": "color",
+    "text": "轴区颜色",
+    "value": "#101820"
+  },
+  "axisTransparency": {
+    "type": "slider",
+    "text": "轴区透明度（100 完全透出光流）",
+    "value": 55,
+    "min": 0,
+    "max": 100,
+    "step": 1
+  },
+  "axisRadius": {
+    "type": "slider",
+    "text": "轴区圆角",
+    "value": 12,
+    "min": 0,
+    "max": 70,
+    "step": 1
+  },
+  "axisFeather": {
+    "type": "slider",
+    "text": "轴区边缘柔化",
+    "value": 8,
+    "min": 0,
+    "max": 35,
+    "step": 1
   },
   "sectionInput": {
     "type": "label",
@@ -229,9 +266,26 @@
     "text": "清空图案 / 重新开始游戏",
     "type": "button"
   },
+  "sectionSleep": {
+    "type": "label",
+    "value": "07 · 键盘屏自动休眠"
+  },
+  "sleepEnabled": {
+    "type": "checkbox",
+    "text": "键盘和鼠标均闲置时休眠",
+    "value": true
+  },
+  "sleepMinutes": {
+    "type": "slider",
+    "text": "闲置分钟数（操作后自动恢复）",
+    "value": 10,
+    "min": 1,
+    "max": 120,
+    "step": 1
+  },
   "sectionCalibration": {
     "type": "label",
-    "value": "07 · 实体键位校准"
+    "value": "08 · 实体键位校准"
   },
   "calibration": {
     "value": false,

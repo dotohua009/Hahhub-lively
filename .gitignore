@@ -1,6 +1,10 @@
 dist/
 .playwright-cli/
 wallpaper/KeyBloomInput.exe
+wallpaper/KeyBloomSleep.exe
 wallpaper/bridge-*.json
+wallpaper/sleep-*.json
+wallpaper/sleep-*.jsonl
+wallpaper/sleep-*.tmp
 node_modules/
 *.log

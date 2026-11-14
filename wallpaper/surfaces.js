@@ -27,14 +27,26 @@ const keySurfaces = (() => {
       ctx.restore();
     }
   }
-  let gapMask=null,maskSignature='',maze=[],mazeSeed=(Math.random()*0xffffffff)>>>0;
+  let axisLayer=null,maskSignature='',maze=[],mazeSeed=(Math.random()*0xffffffff)>>>0;
   function gaps(ctx,keys,box,W,H,now,settings,events){
     if(!settings.gapMode||!settings.gapBrightness)return;
-    const boxes=keys.map(box),width=settings.gapWidth*W/1920,signature=[W,H,width,...boxes.flatMap(b=>[b.x,b.y,b.w,b.h])].join(',');
-    if(signature!==maskSignature){maskSignature=signature;gapMask=new Path2D();gapMask.rect(0,0,W,H);for(const b of boxes)gapMask.rect(b.x+width/2,b.y+width/2,Math.max(1,b.w-width),Math.max(1,b.h-width));maze=[];const rnd=random(mazeSeed);for(const b of boxes)for(const side of [0,1])if(rnd()>.27)maze.push(side?[b.x,b.y,b.x+b.w,b.y]:[b.x,b.y,b.x,b.y+b.h]);}
-    ctx.save();ctx.clip(gapMask,'evenodd');ctx.globalAlpha*=settings.gapBrightness/100;
+    const boxes=keys.map(box),unit=W/1920,width=settings.gapWidth*unit,signature=[W,H,settings.axisSize,settings.axisColor,settings.axisRadius,settings.axisFeather,...boxes.flatMap(b=>[b.x,b.y,b.w,b.h,b.cx,b.cy])].join(',');
+    if(signature!==maskSignature){
+      maskSignature=signature;axisLayer=document.createElement('canvas');axisLayer.width=W;axisLayer.height=H;
+      const layer=axisLayer.getContext('2d'),size=settings.axisSize*unit,n=Math.max(1,Math.ceil(size)),sprite=document.createElement('canvas');sprite.width=sprite.height=n;
+      const sc=sprite.getContext('2d'),pixels=sc.createImageData(n,n),radius=Math.min(size/2,settings.axisRadius*unit),feather=Math.min(size/2,settings.axisFeather*unit),rgb=[1,3,5].map(i=>parseInt(settings.axisColor.slice(i,i+2),16));
+      // Cache a rounded square with an inward soft edge; every switch uses this same footprint.
+      for(let y=0;y<n;y++)for(let x=0;x<n;x++){
+        const qx=Math.abs((x+.5)*size/n-size/2)-size/2+radius,qy=Math.abs((y+.5)*size/n-size/2)-size/2+radius,d=Math.hypot(Math.max(qx,0),Math.max(qy,0))+Math.min(Math.max(qx,qy),0)-radius;
+        const a=Math.max(0,Math.min(1,feather?-d/feather:.5-d)),i=(y*n+x)*4;
+        pixels.data.set([...rgb,Math.round(255*a*a*(3-2*a))],i);
+      }
+      sc.putImageData(pixels,0,0);for(const b of boxes)layer.drawImage(sprite,b.cx-size/2,b.cy-size/2,size,size);
+      maze=[];const rnd=random(mazeSeed);for(const b of boxes)for(const side of [0,1])if(rnd()>.27)maze.push(side?[b.x,b.y,b.x+b.w,b.y]:[b.x,b.y,b.x,b.y+b.h]);
+    }
+    ctx.save();ctx.globalAlpha*=settings.gapBrightness/100;
     const t=now*.001*settings.gapSpeed/100,mode=settings.gapMode;
-    ctx.fillStyle=mode===3?'#160200':mode===2?'#001a28':'#030714';ctx.fillRect(0,0,W,H);
+    const base=ctx.createLinearGradient(0,0,W,H);base.addColorStop(0,`hsl(${(t*35)%360},85%,27%)`);base.addColorStop(1,`hsl(${(t*35+140)%360},90%,35%)`);ctx.fillStyle=base;ctx.fillRect(0,0,W,H);
     if(mode===4){ctx.lineCap='round';for(let i=0;i<maze.length;i++){const [x,y,x2,y2]=maze[i],f=(t*.65+i*.173)%1;ctx.lineWidth=width*.7;ctx.strokeStyle=`hsla(${(i*19+t*55)%360},95%,65%,.7)`;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x2,y2);ctx.stroke();ctx.fillStyle='#eaffff';ctx.beginPath();ctx.arc(x+(x2-x)*f,y+(y2-y)*f,width*.3,0,TAU);ctx.fill();}}
     else {const g=ctx.createLinearGradient(-W*.4+Math.sin(t*.3)*W*.2,0,W,H);for(let i=0;i<=12;i++){const f=i/12,h=mode===1?(i*42+t*75)%360:mode===2?188+Math.sin(i+t)*22:18+Math.sin(i+t)*14;g.addColorStop(f,`hsl(${h},100%,${mode===3?46+14*Math.sin(i-t):48+18*Math.sin(i-t)}%)`);}ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
       ctx.lineWidth=width*.15;for(let i=0;i<24;i++){ctx.strokeStyle=mode===3?'#ffcf6580':'#e5ffff80';ctx.beginPath();const y=(i/24*H+t*(mode===2?35:18))%H;for(let x=0;x<=W;x+=24){const yy=y+Math.sin(x/120+t*2+i)*width*.7;if(x===0)ctx.moveTo(x,yy);else ctx.lineTo(x,yy);}ctx.stroke();}}
@@ -46,7 +58,7 @@ const keySurfaces = (() => {
     }}
     // A key strike pushes a bright wave through the surrounding channels.
     for(const e of events){const age=(now-e.start)/1000;if(age<0||age>1.2)continue;const b=box(keys.find(k=>k.code===e.code));ctx.strokeStyle=`rgba(255,255,255,${(1-age/1.2)*.9})`;ctx.lineWidth=width*.7;ctx.beginPath();ctx.arc(b.cx,b.cy,age*b.h*(3.5+e.seed*.16),0,TAU);ctx.stroke();}
-    ctx.restore();
+    ctx.restore();ctx.save();ctx.globalAlpha*=1-settings.axisTransparency/100;ctx.drawImage(axisLayer,0,0);ctx.restore();
   }
   function letterpress(ctx,k,b,e,age,fade,light){const rnd=random(Math.floor(e.seed*1e8)),p=Math.min(b.w,b.h),rise=Math.exp(-age*15)*p*.12;ctx.save();ctx.translate(b.cx,b.cy+rise);ctx.rotate((rnd()-.5)*.06);const w=Math.min(b.w*.8,p*1.4),h=p*.76;
     ctx.fillStyle=light?'#15323d':'#b8dfe6';ctx.globalAlpha*=fade;ctx.fillRect(-w/2+3,-h/2+5,w,h);ctx.fillStyle=light?'#f3ecdb':'#192c32';ctx.fillRect(-w/2,-h/2,w,h);ctx.strokeStyle=light?'#8c8067':'#7197a0';ctx.lineWidth=1;ctx.strokeRect(-w/2,-h/2,w,h);

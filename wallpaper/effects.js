@@ -3,14 +3,23 @@
   const canvas=document.getElementById('screen'),ctx=canvas.getContext('2d'),byCode=new Map(KEYS.map(k=>[k.code,k]));
   // Runs inside Lively Wallpaper: https://github.com/lively-community/lively
   const settings={...KEYBLOOM_DEFAULTS};
-  let W=innerWidth,H=innerHeight,events=[],held=new Map(),lastPress=null,lastFrame=0,received=0,frameCount=0,raf=0,inputPending=false;
+  let W=innerWidth,H=innerHeight,events=[],held=new Map(),lastPress=null,lastFrame=0,received=0,frameCount=0,raf=0,inputPending=false,paused=false;
   const TAU=Math.PI*2,clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
   function box(k){const t=CALIBRATION.transform,v=CALIBRATION.viewport,sx=W/v.width,sy=H/v.height,px=t.px*sx*settings.scaleX/100,py=t.py*sy*settings.scaleY/100,cx=(t.x+8*t.px)*sx+settings.shiftX*W/1920,cy=(t.y+3*t.py)*sy+settings.shiftY*H/720;return{x:cx+(k.x-8)*px,y:cy+(k.y-3)*py,w:k.w*px,h:py,cx:cx+(k.cx-8)*px,cy:cy+(k.cy-3)*py};}
-  function wake(){if(!raf&&!document.hidden){lastFrame=performance.now();raf=requestAnimationFrame(frame);}}
+  function wake(){if(!raf&&!document.hidden&&!paused){lastFrame=performance.now();raf=requestAnimationFrame(frame);}}
   function resize(){W=innerWidth;H=innerHeight;canvas.width=W;canvas.height=H;wake();}
   function trigger(code,time=performance.now()){if(!byCode.has(code))return false;const previous=lastPress&&time-lastPress.time>=0&&time-lastPress.time<1000&&lastPress.code!==code?lastPress.code:null;events.push({code,start:time,previous,seed:Math.random()*TAU,hit:keyGames.press(code)});if(events.length>96)events.shift();lastPress={code,time};received++;keyAudio.play(settings.effect);inputPending=true;wake();return true;}
-  function key(code,down,time=performance.now()){if(!byCode.has(code))return;if(down){if(!held.has(code)){held.set(code,time+settings.holdDelay);trigger(code,time);}}else if(held.delete(code))keyGames.release(code);}
+  function key(code,down,time=performance.now()){if(!byCode.has(code))return;if(down){if(paused||document.hidden)return;if(!held.has(code)){held.set(code,time+settings.holdDelay);trigger(code,time);}}else if(held.delete(code))keyGames.release(code);}
   function releaseAll(){for(const code of held.keys())key(code,false);}
+  function playback(value){
+    if(typeof value==='string'){try{value=JSON.parse(value);}catch{return;}}
+    if(!value||typeof value.IsPaused!=='boolean')return;
+    paused=value.IsPaused;releaseAll();events=[];lastPress=null;inputPending=false;keyAudio.stop();
+    cancelAnimationFrame(raf);raf=0;
+    // Clear the last held effect on both sides of a host pause, even if keyup was lost.
+    keyGames.reset(settings.effect);draw(performance.now());if(!paused)wake();
+  }
+  window.livelyWallpaperPlaybackChanged=playback;
   function isLight(){if(settings.background===5){const c=settings.backgroundColor;return (.299*parseInt(c.slice(1,3),16)+.587*parseInt(c.slice(3,5),16)+.114*parseInt(c.slice(5,7),16))*settings.brightness/100>115;}return settings.background<2&&settings.brightness>45;}
   function color(k,a=1,shift=0){return `hsla(${(182+k.cx*10+k.y*6+shift)%360},82%,${isLight()?43:66}%,${clamp(a,0,1)})`;}
   function glow(k,x,y,r,a){const g=ctx.createRadialGradient(x,y,0,x,y,r);g.addColorStop(0,color(k,a*.35));g.addColorStop(.45,color(k,a*.12));g.addColorStop(1,color(k,0));ctx.fillStyle=g;ctx.fillRect(x-r,y-r,r*2,r*2);}
@@ -96,7 +105,7 @@
     keyLights(now);ctx.globalAlpha=1;
   }
   // New input paints on the next display frame; continuing animation keeps the FPS limit.
-  function frame(now){if(!inputPending&&now-lastFrame<1000/settings.fps-1){raf=requestAnimationFrame(frame);return;}keyGames.step(Math.min(100,now-lastFrame)*(settings.effect===4||settings.effect===5?settings.gameSpeed/100:1),settings.glassRepair);lastFrame=now;frameCount++;events=events.filter(e=>now-e.start<settings.duration);
+  function frame(now){if(paused||document.hidden){raf=0;return;}if(!inputPending&&now-lastFrame<1000/settings.fps-1){raf=requestAnimationFrame(frame);return;}keyGames.step(Math.min(100,now-lastFrame)*(settings.effect===4||settings.effect===5?settings.gameSpeed/100:1),settings.glassRepair);lastFrame=now;frameCount++;events=events.filter(e=>now-e.start<settings.duration);
     // Schedule from this frame so a paused wallpaper never catches up with a burst.
     for(const [code,next] of held){if(now>=next){trigger(code,now);held.set(code,now+settings.repeatInterval);}}
     inputPending=false;draw(now);
@@ -105,18 +114,18 @@
     raf=events.length||held.size||movingBackground||movingGame||(settings.gapMode&&settings.gapBrightness)?requestAnimationFrame(frame):0;
   }
   window.addEventListener('keydown',e=>{if(byCode.has(e.code)){e.preventDefault();key(e.code,true);}});window.addEventListener('keyup',e=>key(e.code,false));window.addEventListener('blur',releaseAll);
-  document.addEventListener('visibilitychange',()=>{if(document.hidden){releaseAll();keyAudio.stop();cancelAnimationFrame(raf);raf=0;}else wake();});
+  document.addEventListener('visibilitychange',()=>{releaseAll();if(document.hidden){keyAudio.stop();cancelAnimationFrame(raf);raf=0;}else wake();});
   canvas.addEventListener('pointerdown',e=>{if(e.button!==0)return;const k=KEYS.find(k=>{const b=box(k);return e.clientX>=b.x&&e.clientX<b.x+b.w&&e.clientY>=b.y&&e.clientY<b.y+b.h;});if(k)trigger(k.code);});
   window.livelyPropertyListener=(name,value)=>{
     wake();
-    if(['labels','calibration','soundEnabled'].includes(name)){settings[name]=value===true||value==='true';if(name==='soundEnabled')keyAudio.configure(settings.soundEnabled,settings.soundVolume);return;}
-    if(name==='backgroundColor'){if(typeof value==='string'&&/^#[0-9a-f]{6}$/i.test(value))settings.backgroundColor=value;return;}
+    if(['labels','calibration','soundEnabled','sleepEnabled'].includes(name)){settings[name]=value===true||value==='true';if(name==='soundEnabled')keyAudio.configure(settings.soundEnabled,settings.soundVolume);return;}
+    if(['backgroundColor','axisColor'].includes(name)){if(typeof value==='string'&&/^#[0-9a-f]{6}$/i.test(value))settings[name]=value;return;}
     if(name==='demo'){const now=performance.now();lastPress=null;if(settings.effect===4||settings.effect===5){keyGames.reset(settings.effect);keyGames.step(0);return;}['KeyQ','KeyW','KeyE','KeyR','KeyT','KeyY','KeyU','KeyI','KeyO','KeyP','Enter','Space'].forEach((code,i)=>{for(let j=0;j<(settings.effect===6?5:1);j++)trigger(code,now+i*100);});return;}
     if(name==='clear'){events=[];held.clear();lastPress=null;keyGames.reset(settings.effect);return;}
-    const ranges={effect:[0,8],category:[0,1],animation:[0,6],game:[0,1],gapMode:[0,4],gapWidth:[2,30],gapBrightness:[0,100],gapSpeed:[25,200],soundVolume:[0,100],splashRange:[50,400],splashSpeed:[50,400],holdDelay:[0,1000],repeatInterval:[40,500],background:[0,5],brightness:[0,100],fps:[15,60],keyLight:[0,100],gameSpeed:[50,180],glassRepair:[3000,30000],strength:[10,100],duration:[600,6000],shiftX:[-200,200],shiftY:[-100,100],scaleX:[80,120],scaleY:[80,120]};
+    const ranges={effect:[0,8],category:[0,1],animation:[0,6],game:[0,1],gapMode:[0,4],gapWidth:[2,30],gapBrightness:[0,100],gapSpeed:[25,200],axisSize:[20,140],axisTransparency:[0,100],axisRadius:[0,70],axisFeather:[0,35],sleepMinutes:[1,120],soundVolume:[0,100],splashRange:[50,400],splashSpeed:[50,400],holdDelay:[0,1000],repeatInterval:[40,500],background:[0,5],brightness:[0,100],fps:[15,60],keyLight:[0,100],gameSpeed:[50,180],glassRepair:[3000,30000],strength:[10,100],duration:[600,6000],shiftX:[-200,200],shiftY:[-100,100],scaleX:[80,120],scaleY:[80,120]};
     if(!(name in ranges)||!Number.isFinite(Number(value)))return;settings[name]=clamp(Number(value),...ranges[name]);if(name==='background')settings.background=Math.round(settings.background);if(['category','animation','game','gapMode'].includes(name))settings[name]=Math.round(settings[name]);if(name==='soundVolume')keyAudio.configure(settings.soundEnabled,settings.soundVolume);if(['category','animation','game'].includes(name))settings.effect=settings.category?[4,5][settings.game]:[0,1,2,3,6,7,8][settings.animation];if(['effect','category','animation','game'].includes(name)){settings.effect=Math.round(settings.effect);events=[];held.clear();lastPress=null;keyGames.reset(settings.effect);}
   };
-  window.keyBloom={keys:KEYS,box,trigger,key,draw,get state(){return{viewport:{width:W,height:H},settings:{...settings},received,eventCount:events.length,active:[...held.keys()],frameCount,animating:!!raf,game:keyGames.state,audio:keyAudio.state};}};
+  window.keyBloom={keys:KEYS,box,trigger,key,draw,get state(){return{viewport:{width:W,height:H},settings:{...settings},received,eventCount:events.length,active:[...held.keys()],frameCount,animating:!!raf,paused,game:keyGames.state,audio:keyAudio.state};}};
   keyGames.reset(settings.effect);
   resize();addEventListener('resize',resize);
 })();
