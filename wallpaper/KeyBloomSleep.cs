@@ -33,11 +33,14 @@ internal static class KeyBloomSleep
     [DllImport("user32.dll")]static extern bool CloseDesktop(IntPtr desktop);
     static readonly string root=AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
     static readonly string recovery=Path.Combine(root,"sleep-recovery.json");
+    static readonly string manualFlag=Path.Combine(root,"sleep-manual.flag");
+    static readonly string wakeRequest=Path.Combine(root,"sleep-wake.request");
     static readonly JavaScriptSerializer json=new JavaScriptSerializer();
     const string mutexName="Local\\KeyBloom.KeyboardScreenSleep";
     static uint Idle(){var info=new LastInput{size=8};return GetLastInputInfo(ref info)?unchecked((uint)Environment.TickCount-info.time):0;}
     static bool DesktopAvailable(){var h=OpenInputDesktop(0,false,0x100);if(h==IntPtr.Zero)return false;CloseDesktop(h);return true;}
     static bool Due(bool enabled,uint idle,int minutes){return enabled&&minutes>=1&&minutes<=120&&idle>=(uint)minutes*60000;}
+    static bool ShouldSleep(bool manual,bool wake,bool enabled,uint idle,int minutes,bool cooledDown){return !wake&&(manual||(Due(enabled,idle,minutes)&&cooledDown));}
     static string Normalize(string name){return name.TrimStart('\\').ToUpperInvariant();}
     static Snapshot Capture(){
         for(int attempt=0;attempt<3;attempt++){
@@ -103,37 +106,49 @@ internal static class KeyBloomSleep
         Process owner=null;try{owner=Process.GetProcessById(pid);}catch(ArgumentException){}
         while(File.Exists(recovery)&&owner!=null&&!owner.HasExited)Thread.Sleep(500);
         if(owner!=null)owner.Dispose();
+        if(File.Exists(manualFlag)&&!File.Exists(wakeRequest))return 0;
         if(File.Exists(recovery)){for(int i=0;i<120;i++){try{if(DesktopAvailable()){Restore();Status("recovered");return 0;}}catch{}Thread.Sleep(1000);}return 1;}return 0;
     }
     static int Main(string[] args){
         try{
+            if(args.Length==1&&(args[0]=="--sleep-now"||args[0]=="--wake")){
+                string bridge=Path.Combine(root,"KeyBloomInput.exe");if(!File.Exists(bridge))throw new Exception("Input helper is missing.");
+                if(args[0]=="--sleep-now"){File.Delete(wakeRequest);File.WriteAllText(manualFlag,"manual");}
+                else{File.WriteAllText(wakeRequest,"wake");File.Delete(manualFlag);}
+                Process.Start(new ProcessStartInfo(bridge){UseShellExecute=false,CreateNoWindow=true});return 0;
+            }
             if(args.Length==2&&args[0]=="--guard")return Guard(int.Parse(args[1]));
             if(args.Length>0&&args[0]=="--self-test"){
                 if(Marshal.SizeOf(typeof(DisplayPath))!=72||Marshal.SizeOf(typeof(Mode))!=64||!Due(true,600000,10)||Due(true,599999,10)||Due(false,700000,10)||Due(true,700000,0))throw new Exception("Idle or native layout self-test failed.");
+                if(!ShouldSleep(true,false,true,0,10,false)||!ShouldSleep(true,false,false,0,10,true)||ShouldSleep(true,true,true,900000,10,true)||ShouldSleep(false,false,true,0,10,true)||!ShouldSleep(false,false,true,600000,10,true)||ShouldSleep(false,false,true,600000,10,false))throw new Exception("Manual sleep and wake policy self-test failed.");
                 var original=Capture();var copy=json.Deserialize<Snapshot>(json.Serialize(original));if(!Matches(copy,original,false))throw new Exception("Snapshot round trip failed.");Status("self-test-passed");return 0;
             }
             bool created;using(var mutex=new Mutex(true,mutexName,out created)){if(!created)return 0;
-                if(File.Exists(recovery))Restore();
+                if(File.Exists(recovery)&&(!File.Exists(manualFlag)||File.Exists(wakeRequest))&&DesktopAvailable())Restore();
                 if(args.Length>0&&args[0]=="--test"){
                     var initial=Prepare(Assignment());try{Sleep(initial);Thread.Sleep(5000);}finally{Restore();}
                     File.WriteAllText(Path.Combine(root,"sleep-test.json"),json.Serialize(new{singleDisplayDisconnected=true,restored=true,otherDisplayModesPreserved=Matches(Capture(),initial,false),utc=DateTime.UtcNow.ToString("o")}));Status("test-passed");return 0;
                 }
                 if(args.Length!=2||args[0]!="--monitor")return 0;
                 using(var parent=Process.GetProcessById(int.Parse(args[1]))){
-                    bool sleeping=false;Dictionary<string,object> screen=null;DateTime lastStatus=DateTime.MinValue,lastWake=DateTime.UtcNow;
+                    bool sleeping=File.Exists(recovery);Dictionary<string,object> screen=null;DateTime lastStatus=DateTime.MinValue,lastWake=DateTime.UtcNow;
+                    if(sleeping){var saved=json.Deserialize<Snapshot>(File.ReadAllText(recovery));var current=Capture();if(Matches(current,saved,false)){File.Delete(recovery);sleeping=false;}else if(!Matches(current,saved,true))throw new Exception("Manual sleep layout changed; automatic changes stopped.");}
                     try{while(!parent.HasExited){
                         try{
-                            // Lively may remove a disconnected screen from its live layout; retain its saved-settings identity until wake.
-                            if(!sleeping)screen=Assignment();var settings=Settings(screen);bool enabled=settings.ContainsKey("sleepEnabled")&&Convert.ToBoolean(settings["sleepEnabled"]["value"]);int minutes=settings.ContainsKey("sleepMinutes")?Convert.ToInt32(settings["sleepMinutes"]["value"]):10;
-                            uint idleBefore=Idle();bool desired=Due(enabled,idleBefore,minutes)&&DateTime.UtcNow-lastWake>TimeSpan.FromSeconds(15);
+                            bool manual=File.Exists(manualFlag),wake=File.Exists(wakeRequest);
+                            if(wake){if(!DesktopAvailable()){Thread.Sleep(500);continue;}Restore();sleeping=false;lastWake=DateTime.UtcNow;File.Delete(wakeRequest);Status("awake");lastStatus=DateTime.UtcNow;}
+                            // Manual sleep must remain independent of keyboard/mouse input and Lively's disconnected-screen layout.
+                            bool enabled=false;int minutes=10;
+                            if(!manual){if(!sleeping)screen=Assignment();var settings=Settings(screen);enabled=settings.ContainsKey("sleepEnabled")&&Convert.ToBoolean(settings["sleepEnabled"]["value"]);minutes=settings.ContainsKey("sleepMinutes")?Convert.ToInt32(settings["sleepMinutes"]["value"]):10;}
+                            uint idleBefore=Idle();bool desired=ShouldSleep(manual,wake,enabled,idleBefore,minutes,DateTime.UtcNow-lastWake>TimeSpan.FromSeconds(15));
                             if(DesktopAvailable()){
                                 if(sleeping&&!desired){Restore();sleeping=false;lastWake=DateTime.UtcNow;Status("awake");lastStatus=DateTime.UtcNow;File.AppendAllText(Path.Combine(root,"sleep-cycles.jsonl"),json.Serialize(new{state="awake",idleMilliseconds=idleBefore,utc=DateTime.UtcNow.ToString("o")})+Environment.NewLine);}
-                                else if(!sleeping&&desired){Sleep(Prepare(screen));sleeping=true;lastStatus=DateTime.UtcNow;var journal=Path.Combine(root,"sleep-cycles.jsonl");if(File.Exists(journal)&&new FileInfo(journal).Length>32768)File.WriteAllText(journal,"");File.AppendAllText(journal,json.Serialize(new{state="sleeping",idleMilliseconds=idleBefore,minutes=minutes,utc=DateTime.UtcNow.ToString("o")})+Environment.NewLine);}
+                                else if(!sleeping&&desired){Sleep(Prepare(manual?Assignment():screen));sleeping=true;Status(manual?"manual-sleeping":"sleeping");lastStatus=DateTime.UtcNow;var journal=Path.Combine(root,"sleep-cycles.jsonl");if(File.Exists(journal)&&new FileInfo(journal).Length>32768)File.WriteAllText(journal,"");File.AppendAllText(journal,json.Serialize(new{state=manual?"manual-sleeping":"sleeping",idleMilliseconds=idleBefore,minutes=minutes,utc=DateTime.UtcNow.ToString("o")})+Environment.NewLine);}
                             }
-                            if(DateTime.UtcNow-lastStatus>TimeSpan.FromSeconds(15)){Status(sleeping?"sleeping":enabled?"watching":"disabled");lastStatus=DateTime.UtcNow;}
-                        }catch(Exception e){Status("error",e.Message);if(File.Exists(recovery)&&DesktopAvailable()){Restore();sleeping=false;lastWake=DateTime.UtcNow;}Thread.Sleep(3000);}
+                            if(DateTime.UtcNow-lastStatus>TimeSpan.FromSeconds(15)){Status(sleeping?(manual?"manual-sleeping":"sleeping"):manual?"waiting-for-unlock":enabled?"watching":"disabled");lastStatus=DateTime.UtcNow;}
+                        }catch(Exception e){Status("error",e.Message);if(File.Exists(recovery)&&DesktopAvailable()&&!File.Exists(manualFlag)){Restore();sleeping=false;lastWake=DateTime.UtcNow;}Thread.Sleep(3000);}
                         Thread.Sleep(500);
-                    }}finally{if(File.Exists(recovery)&&DesktopAvailable())Restore();}
+                    }}finally{if(File.Exists(recovery)&&DesktopAvailable()&&!File.Exists(manualFlag))Restore();}
                 }mutex.ReleaseMutex();
             }return 0;
         }catch(Exception e){Status("error",e.Message);return 1;}

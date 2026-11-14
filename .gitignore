@@ -8,3 +8,5 @@ wallpaper/sleep-*.jsonl
 wallpaper/sleep-*.tmp
 node_modules/
 *.log
+wallpaper/sleep-*.flag
+wallpaper/sleep-*.request
