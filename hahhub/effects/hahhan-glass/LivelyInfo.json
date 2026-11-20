@@ -1,0 +1,12 @@
+{
+  "AppVersion": "2.2.1.0",
+  "Title": "碎屏 · IPI 84",
+  "Desc": "按下哪个键，玻璃就从对应位置碎裂、自愈。固定 IPI 84 实体布局。",
+  "Author": "HAHHAN",
+  "Type": 1,
+  "FileName": "index.html",
+  "Thumbnail": "thumbnail.jpg",
+  "IsAbsolutePath": false,
+  "Arguments": "--pause-event true",
+  "Version": 1
+}

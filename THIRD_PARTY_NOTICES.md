@@ -8,3 +8,5 @@
 - 已验证版本：Lively 2.2.1.0，WebView2 播放器。
 
 Lively Wallpaper 采用 GPL-3.0 许可，作者信息与版权声明以其官方仓库为准。本项目不是 Lively 官方发行版；本项目的仓库和下载包不含 Lively 安装程序或修改版。感谢 Lively 提供开源壁纸运行平台。
+
+The hahhub desktop application includes additional components. See [hahhub third-party notices](hahhub/NOTICE.md).

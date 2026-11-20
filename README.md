@@ -1,84 +1,29 @@
-# KeyBloom · 键下生花
+# hahhub
 
-透明屏幕键盘的开源互动壁纸。按下实体键，图案从对应键位下方出现；点按立即响应，长按持续触发。
+hahhub turns a transparent keyboard display into a live surface for your keystrokes. Press a key on an IPI 84 and the wallpaper beneath it fractures or spirals inward. You can also cast video to the keyboard display and use the same effects on the moving picture.
 
-基于 **[Lively Wallpaper](https://github.com/lively-community/lively)** 运行。Lively 提供桌面承载、多屏管理和自定义设置；本项目提供实体键位映射、动画、游戏与后台按键转发。独立社区项目，与 Lively 官方无隶属关系。
+[Download for Windows x64](https://raw.githubusercontent.com/dotohua009/keybloom-lively/main/downloads/hahhub/v1.0.0/hahhub-windows-x64.zip) · [Source and build instructions](hahhub/) · [简体中文](#简体中文)
 
-- [下载 v1.3.2 壁纸 ZIP](downloads/KeyBloom-IPI84-v1.3.2.zip)
-- [Lively 官方下载](https://github.com/lively-community/lively/releases)
-- [完整使用说明](wallpaper/使用说明.md)
-- [测试与资源占用说明](docs/PERFORMANCE.md)
+![hahhub showing the Fracture preview and its controls](docs/hahhub-studio.png)
 
-## v1.3.2 · 稳定分发版
+## Effects and video
 
-沿用 v1.3.1 的运行代码、校准和默认参数；本次更新分发包与说明，不包含尚未通过实体测试的 Alt＋Tab 转发实验。
+- **Fracture** starts a crack at the calibrated switch position. Hold to extend it, press a nearby key to influence its path, and release to let it heal in reverse after an adjustable delay.
+- **Black Hole** pulls the live image into a rotating, irregular opening. Adjacent keys merge their holes. Hold for about 4.7 seconds to swallow the display, then release to let the picture return.
+- **Video Cast** plays a Bilibili video page or a direct MP4, WebM or M4V link on one selected extended display. Playback controls stay in hahhub. The active effect samples the video while third-party wallpaper sampling is paused.
 
-### 已知问题与验证边界
+## Get started
 
-- **Alt＋Tab 尚未修复**：先按住 Alt 再按 Tab 时，Tab 位置可能没有动画。普通 A、S、D 与空格多键响应已获用户确认，不代表所有系统组合键都受支持。
-- 微信／企业微信截图过程中的静态遮罩仍可能覆盖动画；退出截图及锁屏解锁后的按键残留问题已获用户确认恢复正常。
-- 单屏休眠已完成 5 秒断开／恢复测试；完整 10 分钟闲置周期、另一台电脑的安装与实际功耗仍未完成实测。
+1. Extract the Windows ZIP and run `powershell -ExecutionPolicy Bypass -File .\install.ps1` from its folder. Video playback uses Microsoft Edge WebView2 Runtime.
+2. Open **hahhub**, select the keyboard display and choose **Enable effects**. The IPI 84 layout follows the calibrated physical keys. You can choose any extended display by name.
+3. Minimize or close the panel to keep it in the system tray. Double-click the **H** icon to reopen it, or use **Quit hahhub** to stop the app and its renderer.
 
-### 保留功能
+Choose **Settings → Language** for English or 简体中文. **Settings → Updates** checks the public update channel and installs a verified package in place. Display selection, effect settings and language are kept across updates.
 
-- 分区设置：动画、游戏、轴间灯效与轴区、触发、声音、背景、休眠、校准。
-- 玻璃碎裂：每次敲击产生不同分叉、暗边和细亮边，旧裂纹保留，连续输入增加损伤，松开后修复。
-- 活字印刷：实体键位下方压印字模，随机墨点与轻微偏转。
-- 整面轴间光流：RGB 流水、清水、熔岩、光流迷宫铺满轴体以外的区域。轴区全部以已校准中心定位，大键与小键尺寸一致；尺寸、颜色、透明度、圆角、柔边可调。
-- 修复截图退出、锁屏/解锁和播放器重载后丢失松键事件造成的持续触发；接入 Lively 暂停回调。
-- 键鼠共同闲置默认 10 分钟，仅暂时断开已核对的键盘屏输出，操作后恢复；保留供电，不使用 DDC 关机。
-- 本地合成音效，可关闭，默认关闭。不需要音频素材或联网。
-- 默认参数来自实际校准与调节：黑底、60 FPS、照明 100、范围 270%、速度 200%、长按等待 40 ms、间隔 210 ms。
-- 默认保留玻璃动画，新增夹缝灯效关闭；画面不显示提示、注释或键名。
+## 简体中文
 
-![不规则累积玻璃裂纹](docs/glass-v1.2.png)
-![统一半透明轴区与整面光流](docs/axis-v1.3.jpg)
+hahhub 是为透明屏键盘制作的 Windows 桌面程序。选中键盘屏后，实体按键会在对应位置生成沿画面生长的裂纹，或将周围纹理卷入黑洞。视频上屏支持同一组交互，播放进度条和按钮放在控制面板里。最小化或点 × 后，视频和交互继续在托盘运行。
 
-## 安装
+[中文使用说明](hahhub/README.md) · [KeyBloom「键下生花」旧版壁纸、下载与说明](KEYBLOOM.md)
 
-Windows x64，Lively WebView2 网页播放器。将下载的 ZIP 直接拖入 Lively，选中实际键盘屏并应用。点“…”→“打开文件所在位置”，运行导入目录中的 `KeyBloomInput.exe`，即可在其他窗口打字时响应。
-
-导入 ZIP 不会自动启动后台组件。要随登录启用，运行同目录 `Enable-KeyboardInteraction.ps1`；停止并取消登录启动，运行 `Disable-KeyboardInteraction.ps1`。Lively 自身也要设置随系统启动。更换副本前关闭旧副本。
-
-默认校准用于 IPI 84（16u × 6 行）。换电脑后确认显示器编号，在“实体键位校准”区调整中心与键距；四边允许出界。其他键盘布局需修改 `wallpaper/layout.js`。
-
-## 自定义
-
-先选择“当前分类”，再选择对应区的“动画效果”或“游戏”。轴间灯效独立叠加。轴区透明度 0 为所选颜色完全覆盖，100 为完全透出光流；尺寸以屏幕宽 1920 像素为基准，并非毫米实测值。背景亮度设为 0 为纯黑；调为 100 并选择纯白即可使用白底。默认帧率为用户选择的 60，可调至 30 或 15 降低绘制开销。
-
-原有八种玩法保留，新增活字印刷；共七种动画与两种游戏。点按立即触发，长按持续；普通多键可同时响应；系统组合键限制见上方已知问题。自定义改变玩法或重新加载会清空临时游戏状态。
-
-静态无动画时停止绘制；动态背景、游戏、夹缝流动和玻璃修复时持续刷新。后台组件会自动运行 `KeyBloomSleep.exe`，休眠可在自定义中关闭。仅支持本项目单独使用一块非主屏、分辨率为 1920×720 的扩展屏；重新插拔后按当前 Lively 分配核对，不硬编码“屏幕 3”。自动休眠时，独立守护进程在工作进程退出时尝试恢复原布局；手动关闭时保留关闭状态。安全锁屏期间不修改显示拓扑，继续使用 Lively 自身暂停。
-
-已完成 5 秒断开/恢复测试，用户确认键盘屏恢复、其他两屏正常；进程异常退出后的自动恢复也通过软件检查。完整的 10 分钟键鼠闲置周期尚待用户方便时实测，未测实际瓦数。微信/企业微信截图的静态遮罩仍可能在截图过程中覆盖屏幕，壁纸无法穿透该遮罩。
-
-## 构建与测试
-
-网页无 npm 依赖，无远程字体、音频或网络服务。直接打开 `wallpaper/index.html` 可预览；普通网页只在获得焦点时接收键盘。
-
-```powershell
-powershell -File scripts/build.ps1
-```
-
-使用 Windows 自带 .NET Framework x64 编译器，输出 `dist/KeyBloom-IPI84-v1.3.2.zip`。
-
-```sh
-node tests/games.cjs
-node tests/surfaces.cjs
-node tests/defaults.cjs
-```
-
-`tests/interaction.cjs`、`tests/power-light.cjs` 、`tests/surfaces-browser.cjs`、`tests/axis-browser.cjs` 和 `tests/pause.cjs` 是 Playwright 页面检查函数。通过请求拦截提供 `wallpaper/` 的静态文件后运行；无外部服务器依赖。覆盖点按/长按、参数边界、随机裂纹、修复、统一轴区、整屏覆盖、颜色与透明度、圆角与柔边、分类切换、音效开关和空闲停绘。
-
-## 许可与隐私
-
-GPL-3.0，见 [LICENSE](LICENSE)。Lively 的官方来源和许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。分享包不附带 Lively 安装器，使用上述官方链接获取。
-
-后台组件只向本壁纸转发即时按下/松开，不保存按键内容、不转成文字、不联网。休眠恢复文件只保存在本机，包含显示布局；诊断记录包含闲置时长及状态，不包含按键内容。构建包排除这些运行文件。正常输入仍进入前台应用；这不是键盘拦截器。Fn 层由固件决定。未在其他电脑完整安装实测，未测量实际瓦数。
-
-## 手动关闭与开启键盘屏
-
-运行壁纸目录中的 `关闭键盘屏.cmd`，或执行 `KeyBloomSleep.exe --sleep-now`：仅关闭键盘屏输出，持续保持关闭，操作其他屏幕的键盘、鼠标不会唤醒。
-需要使用时运行 `开启键盘屏.cmd`，或执行 `KeyBloomSleep.exe --wake`。手动开启后回到原有自动休眠规则；默认键鼠共同闲置 10 分钟后休眠，自动休眠可由键鼠操作唤醒。
-
-这两个入口会确保后台输入组件已运行。手动关闭状态保存在本机，后台组件退出或重启也不会主动唤醒；恢复快照保留供手动开启使用。锁屏期间请求排队，解锁后执行。手动关闭时不要删除壁纸目录中的恢复文件，开启后会自动清除。更换设备或屏幕布局后需重新核对显示器。
+Developed by **HAHHAN**. Licensed under GPL-3.0. [Third-party notices](hahhub/NOTICE.md)

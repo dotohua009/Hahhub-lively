@@ -1,0 +1,12 @@
+{
+  "AppVersion": "2.2.1.0",
+  "Title": "黑洞 · IPI 84",
+  "Desc": "按下键位，附近的画面向不规则洞口卷入。相邻键合并，长按约 4.7 秒吞满屏幕。",
+  "Author": "HAHHAN",
+  "Type": 1,
+  "FileName": "index.html",
+  "Thumbnail": "thumbnail.jpg",
+  "IsAbsolutePath": false,
+  "Arguments": "--pause-event true",
+  "Version": 1
+}

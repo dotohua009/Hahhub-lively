@@ -1,0 +1,21 @@
+{
+  "pull": {
+    "type": "slider",
+    "text": "吸入强度（%）",
+    "min": 20,
+    "max": 100,
+    "step": 1,
+    "value": 80
+  },
+  "fps": {
+    "type": "dropdown",
+    "text": "最高帧率",
+    "items": [
+      "16 FPS",
+      "24 FPS",
+      "30 FPS",
+      "60 FPS"
+    ],
+    "value": 3
+  }
+}
