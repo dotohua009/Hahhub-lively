@@ -1,0 +1,33 @@
+name: Publish hahhub 1.0.6
+on:
+  push:
+    branches: ['release-assets/v1.0.6']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_COMMIT: 176c637c864a6471e1316d62c5fbc26fc224d721
+    steps:
+      - name: Verify and publish the Windows update
+        run: |
+          set -euo pipefail
+          base="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$RELEASE_COMMIT/downloads/hahhub"
+          curl --fail --location --retry 3 --output update.json "$base/update.json"
+          curl --fail --location --retry 3 --output hahhub-windows-x64.zip "$base/v1.0.6/hahhub-windows-x64.zip"
+          jq -e '.product == "hahhub" and .version == "1.0.6" and .sha256 == "5c60fc16a24956860b19d6a37c93bd60d05c55f71688a361e79753f774a9a52f"' update.json >/dev/null
+          test "$(stat -c %s hahhub-windows-x64.zip)" = "$(jq -r .bytes update.json)"
+          echo "$(jq -r .sha256 update.json)  hahhub-windows-x64.zip" | sha256sum --check
+          cat > release-notes.md <<'NOTES'
+          **Windows x64** · Download `hahhub-windows-x64.zip` below. Existing installations can update from **Settings → Updates**.
+
+          - Calibrate the keycap, switch housing and stem independently for each display. Fine-tune a single key or the whole layout.
+          - Hold a key for a continuous ink spray. Adjust the spray range and recovery time. Droplets bounce off keycaps and tint the switch.
+          - Choose a separate edge glow for Fracture and Black Hole using the new in-app palette.
+
+          **简体中文** · 下载下方 Windows 压缩包，或在「设置 → 软件更新」升级。新版支持键帽、轴体、轴芯三层校准，长按持续泼墨，以及碎裂和黑洞独立辉光选色。
+          NOTES
+          gh release create v1.0.6 hahhub-windows-x64.zip update.json --repo "$GITHUB_REPOSITORY" --target "$RELEASE_COMMIT" --title 'hahhub 1.0.6' --notes-file release-notes.md --latest
