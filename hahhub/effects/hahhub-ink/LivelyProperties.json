@@ -1,0 +1,29 @@
+{
+  "fps": {
+    "type": "dropdown",
+    "text": "最高帧率",
+    "items": [
+      "16 FPS",
+      "24 FPS",
+      "30 FPS",
+      "60 FPS"
+    ],
+    "value": 3
+  },
+  "spread": {
+    "type": "slider",
+    "text": "喷射范围（%）",
+    "min": 75,
+    "max": 250,
+    "step": 5,
+    "value": 160
+  },
+  "recovery": {
+    "type": "slider",
+    "text": "松手恢复时间（毫秒）",
+    "min": 500,
+    "max": 6000,
+    "step": 100,
+    "value": 3500
+  }
+}

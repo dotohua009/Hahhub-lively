@@ -3,10 +3,12 @@ const canvas=document.querySelector('canvas'), ctx=canvas.getContext('2d');
 const keys=new Map(GLASS.keys.map(k=>[k.code,k])), hits=new Map();
 const options={density:75,spread:85,heal:1800,delay:800,crackSize:0}, limits={density:[30,100],spread:[45,150],heal:[500,4000],delay:[0,5000],crackSize:[0,1]};
 let next=0, paused=false,cap=60,due=0;
+let rim='#e6f1ff';
 const joints=[];
 const embedded=Boolean(window.hahhanNative && window.chrome?.webview);
 function status(){document.title='HAHHAN / glass / '+[options.density,options.spread,options.heal,options.delay,options.crackSize,Number(paused)].join('/');}
 window.livelyPropertyListener=(name,value)=>{
+  if(name==='rim'&&/^#[0-9a-f]{6}$/i.test(value)){rim=value;return;}
   if(name==='fps'){cap=[16,24,30,60][value]||60;due=0;return;}
   if(!Object.hasOwn(limits,name)||!Number.isFinite(Number(value)))return;
   options[name]=Math.min(limits[name][1],Math.max(limits[name][0],Math.round(Number(value))));
@@ -109,9 +111,10 @@ function frame(now){
   function paint(paths,alpha,width=unit){
     ctx.save();ctx.globalAlpha=alpha;
     for(let k=0;k<paths.length;k++){
-      const p=paths[k];ctx.strokeStyle=['rgba(9,19,29,.84)','rgba(9,19,29,.84)','rgba(9,19,29,.59)'][k];
+      const p=paths[k];ctx.strokeStyle=rim+(k===0?'3e':'20');ctx.lineWidth=[4.35,3.65,3.15][k]*width;ctx.stroke(p);
+      ctx.strokeStyle=['rgba(9,19,29,.84)','rgba(9,19,29,.84)','rgba(9,19,29,.59)'][k];
       ctx.lineWidth=[2.05,1.35,.85][k]*width;ctx.stroke(p);
-      ctx.save();ctx.translate(.55*unit,-.52*unit);ctx.strokeStyle=['rgba(238,246,252,.96)','rgba(238,246,252,.79)','rgba(238,246,252,.59)'][k];
+      ctx.save();ctx.translate(.55*unit,-.52*unit);ctx.strokeStyle=rim+['f5','c9','96'][k];
       ctx.lineWidth=[.92,.64,.43][k]*width;ctx.stroke(p);ctx.restore();
     }ctx.restore();
   }

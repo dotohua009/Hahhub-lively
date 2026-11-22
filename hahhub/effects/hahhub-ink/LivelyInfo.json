@@ -1,0 +1,12 @@
+{
+  "AppVersion": "2.2.1.0",
+  "Title": "泼墨 · IPI 84",
+  "Desc": "每次按键在轴心溅开彩墨，墨滴向外飞散，连续敲击可叠色。",
+  "Author": "HAHHAN",
+  "Type": 1,
+  "FileName": "index.html",
+  "Thumbnail": "thumbnail.jpg",
+  "IsAbsolutePath": false,
+  "Arguments": "--pause-event true",
+  "Version": 1
+}

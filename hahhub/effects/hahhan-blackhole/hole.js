@@ -20,7 +20,11 @@ function fit(){
   if(cover.naturalWidth){backing.drawImage(cover,0,0,bg.width,bg.height);backgroundPixels=backing.getImageData(0,0,bg.width,bg.height);}
 }
 cover.onload=fit;cover.src=BACKGROUND;document.body.style.backgroundImage='url('+BACKGROUND+')';fit();addEventListener('resize',fit);
-window.livelyPropertyListener=(name,value)=>{if(name==='fps'){cap=[16,24,30,60][value]||60;due=0;}if(name==='pull'&&Number.isFinite(+value))power=Math.max(20,Math.min(100,+value));};
+window.livelyPropertyListener=(name,value)=>{
+  if(name==='rim'&&/^#[0-9a-f]{6}$/i.test(value))for(let i=0;i<3;i++)rim[i]=parseInt(value.slice(1+i*2,3+i*2),16);
+  if(name==='fps'){cap=[16,24,30,60][value]||60;due=0;}
+  if(name==='pull'&&Number.isFinite(+value))power=Math.max(20,Math.min(100,+value));
+};
 function clear(){cancelAnimationFrame(request);request=0;wells.clear();pointerKey=null;ctx.clearRect(0,0,canvas.width,canvas.height);}
 window.livelyWallpaperPlaybackChanged=data=>{
   if(typeof data==='string'){try{data=JSON.parse(data);}catch{return;}}
@@ -108,9 +112,11 @@ function paint({h,w,height,x,y,open,opacity},now){
     const spiral=Math.max(0,sin(a*2+h.p+Math.trunc(d*(1700+900*inward))*h.spin+h.spin*wave*2));
     const fold=spiral**8*pull*clamp(d*16)*.385;
     const shade=clamp((.10-d)*8)*open*.65,glint=lip*lip*arc*open*.88,coreMix=clamp(-d*46);
+    const halo=(1-clamp(Math.abs(d-.018)/.088))**2*arc*open*.30;
     for(let channel=0;channel<3;channel++){
       let col=data[q+channel]+(data[p+channel]-data[q+channel])*weight;
-      col+=(shadow[channel]-col)*shade;col+=(band[channel]-col)*fold;col+=(rim[channel]-col)*glint;
+      col+=(shadow[channel]-col)*shade;col+=(band[channel]-col)*fold;
+      col+=(rim[channel]-col)*halo;col+=(rim[channel]+(255-rim[channel])*.16-col)*glint;
       output[i+channel]=col+(dark[channel]-col)*coreMix;
     }
     const alpha=clamp((1-r)*15)*clamp(open*5)*opacity;

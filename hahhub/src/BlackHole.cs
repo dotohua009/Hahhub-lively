@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Linq;
+using System.Threading.Tasks;
 
 internal interface IKeyEffect {
     bool Active {get;}
@@ -18,6 +19,8 @@ internal interface IKeyEffect {
 
 internal sealed class BlackHole : IKeyEffect,IDisposable {
     public const string Id="hahhan-blackhole";
+    public const int DefaultRim=0xe4e7f2;
+    public int rimColor=DefaultRim;
     const int Resolution=192,Angles=1024;
     public const float DiameterInKeys=3;
     const float Tau=6.2831853f;
@@ -198,7 +201,9 @@ internal sealed class BlackHole : IKeyEffect,IDisposable {
                 float fold=spiral*pull*Clamp(d*16);
                 uint reflection=Blend(color,0xf5efea,168);
                 color=Blend(color,reflection,(int)(fold*150));
-                color=Blend(color,0xe4e7f2,(int)(lip*lip*arc*open*225));
+                float halo=1-Clamp(Math.Abs(d-.018f)/.088f);
+                color=Blend(color,(uint)rimColor,(int)(halo*halo*arc*open*76));
+                color=Blend(color,Blend((uint)rimColor,0xffffff,42),(int)(lip*lip*arc*open*225));
                 color=Blend(color,0x02030a,(int)(Clamp(-d*46)*256));
                 uint pixel=Blend(0,color,alpha==255?256:alpha);
                 *target=((uint)alpha<<24)|pixel;
@@ -211,6 +216,7 @@ internal sealed class BlackHole : IKeyEffect,IDisposable {
         return (alpha<<24)|Blend(a,b,weight);
     }
     int[] columns;
+    readonly uint[][] filteredRows={new uint[Resolution],new uint[Resolution],new uint[Resolution],new uint[Resolution]};
     unsafe void Composite(Surface.Dib dest,RectangleF box,int w,int h){
         int left=Math.Max(0,(int)Math.Ceiling(box.Left-.5f)),top=Math.Max(0,(int)Math.Ceiling(box.Top-.5f));
         int right=Math.Min(w,(int)Math.Ceiling(box.Right-.5f)),bottom=Math.Min(h,(int)Math.Ceiling(box.Bottom-.5f));
@@ -221,17 +227,24 @@ internal sealed class BlackHole : IKeyEffect,IDisposable {
         var src=tile.LockBits(new Rectangle(0,0,Resolution,Resolution),ImageLockMode.ReadOnly,PixelFormat.Format32bppPArgb);
         try{
             var pixels=(byte*)src.Scan0;int stride=src.Stride;
-            for(int y=top;y<bottom;y++){
+            int bands=(right-left)*(long)(bottom-top)>=220000?Math.Min(filteredRows.Length,Environment.ProcessorCount):1;
+            Action<int> paintBand=delegate(int band){
+              var row=filteredRows[band];
+              int y0=top+(bottom-top)*band/bands,y1=top+(bottom-top)*(band+1)/bands;
+              for(int y=y0;y<y1;y++){
                 int v=Math.Max(0,Math.Min((Resolution-1)*256-1,(int)(((y+.5f-box.Y)*Resolution/box.Height-.5f)*256)));
                 var a=(uint*)(pixels+(v>>8)*stride);var b=(uint*)((byte*)a+stride);var output=(uint*)dest.pixels+y*w;
+                for(int i=0;i<Resolution;i++)row[i]=MixPixel(a[i],b[i],v&255);
                 for(int x=left;x<right;x++){
-                    int u=columns[x],i=u>>8;uint pix=MixPixel(MixPixel(a[i],a[i+1],u&255),MixPixel(b[i],b[i+1],u&255),v&255);
+                    int u=columns[x],i=u>>8;uint pix=MixPixel(row[i],row[i+1],u&255);
                     uint alpha=pix>>24;
                     if(alpha==255||output[x]==0)output[x]=pix;
                     else if(alpha!=0){uint under=output[x],inv=255-alpha;
                         output[x]=pix+Blend(0,under,(int)inv)+((((under>>24)*inv+127)/255)<<24);}
                 }
-            }
+              }
+            };
+            if(bands==1)paintBand(0);else Parallel.For(0,bands,paintBand);
         }finally{tile.UnlockBits(src);}
     }
     public void DrawDesktop(Surface.Dib dest,int w,int h,Bitmap wallpaper,Rectangle sample){

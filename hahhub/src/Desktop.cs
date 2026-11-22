@@ -76,6 +76,12 @@ internal sealed class Surface : NativeWindow,IDisposable
         const int required=0x080800a0;
         return (GetWindowLong(Handle,-20)&(required|8))==required && GetWindow(Handle,2)==DesktopAnchor();
     }}
+    internal static Rectangle GlassViewport(Rectangle area,Size size){
+        // Keep the compositor window still as individual crack tips advance across pixels.
+        const int tile=128;
+        return Rectangle.FromLTRB(area.Left/tile*tile,area.Top/tile*tile,
+            Math.Min(size.Width,(area.Right+tile-1)/tile*tile),Math.Min(size.Height,(area.Bottom+tile-1)/tile*tile));
+    }
     public unsafe void Paint(IKeyEffect effect,Rectangle screen,Rectangle area){
         if(area.IsEmpty||(VideoPlayer!=IntPtr.Zero&&!IsWindowVisible(VideoPlayer))){Hide();return;}
         if(Handle==IntPtr.Zero)CreateHandle(new CreateParams{Caption="HAHHAN Glass",Style=unchecked((int)0x80000000),ExStyle=0x080800a0});
@@ -92,13 +98,17 @@ internal sealed class Surface : NativeWindow,IDisposable
         graphics.CompositingMode=System.Drawing.Drawing2D.CompositingMode.SourceOver;
         var sample=(sampleWallpaper||VideoPlayer!=IntPtr.Zero)?effect.SampleArea(screen.Width,screen.Height):Rectangle.Empty;
         var frame=wallpaper.Read(screen,sample,Handle,VideoPlayer);var hole=effect as BlackHole;
-        if(hole!=null){
+        var splash=effect as InkSplash;
+        if(hole!=null||splash!=null){
             graphics.Flush(System.Drawing.Drawing2D.FlushIntention.Sync);
-            hole.DrawDesktop(buffer,screen.Width,screen.Height,frame,sample);
+            if(splash!=null)splash.DrawDesktop(buffer,screen.Width,screen.Height);
+            else hole.DrawDesktop(buffer,screen.Width,screen.Height,frame,sample);
         }else{effect.Draw(graphics,screen.Width,screen.Height,windowArea.X,windowArea.Y,frame,sample);graphics.Flush();}
-        var origin=Point.Empty;var pos=new Point(screen.X+windowArea.X,screen.Y+windowArea.Y);var display=windowArea.Size;var blend=new Blend{opacity=255,alpha=1};
+        // Keep geometry in screen coordinates, but put only the affected pixels above the video.
+        var presented=VideoPlayer==IntPtr.Zero?windowArea:hole==null?GlassViewport(area,size):area;
+        var origin=presented.Location;var pos=new Point(screen.X+presented.X,screen.Y+presented.Y);var display=presented.Size;var blend=new Blend{opacity=255,alpha=1};
         var rect=new DirtyRect{left=dirty.Left,top=dirty.Top,right=dirty.Right,bottom=dirty.Bottom};
-        var update=new LayerUpdate{cb=(uint)sizeof(LayerUpdate),position=&pos,size=&display,source=buffer.dc,origin=&origin,blend=&blend,flags=2,dirty=first?null:&rect};
+        var update=new LayerUpdate{cb=(uint)sizeof(LayerUpdate),position=&pos,size=&display,source=buffer.dc,origin=&origin,blend=&blend,flags=2,dirty=first||VideoPlayer!=IntPtr.Zero?null:&rect};
         if(!UpdateLayeredWindowIndirect(Handle,ref update)&&!UpdateLayeredWindow(Handle,IntPtr.Zero,ref pos,ref display,buffer.dc,ref origin,0,ref blend,2))
             throw new InvalidOperationException("无法显示碎裂层");
         previous=area;
@@ -142,7 +152,7 @@ internal sealed class Host : NativeWindow,IDisposable
         if(nextFrame<now)nextFrame=now;
         animation.Change(Math.Max(1,(int)Math.Ceiling(nextFrame-now)),-1);
     }
-    readonly Surface surface=new Surface(); readonly Glass glass=new Glass();readonly BlackHole hole;IKeyEffect effect;
+    readonly Surface surface=new Surface(); readonly Glass glass=new Glass();readonly BlackHole hole;readonly InkSplash ink;IKeyEffect effect;
     readonly Stopwatch clock=Stopwatch.StartNew();double nextFrame,frameInterval=62.5;
     readonly System.Collections.Generic.HashSet<int> held=new System.Collections.Generic.HashSet<int>();
     const int InputCapacity=256;
@@ -150,7 +160,7 @@ internal sealed class Host : NativeWindow,IDisposable
     string activeId;bool registered,locked;Rectangle bounds;
     readonly bool probe;public int Frames{get;private set;}
     public bool Drawing{get{return drawing;}}
-    public Host(bool offscreenProbe=false){probe=offscreenProbe;hole=new BlackHole(glass.data.pitch);effect=glass;CreateHandle(new CreateParams{Caption=probe?"HAHHAN Effect Probe":"HAHHAN Glass Host",Style=unchecked((int)0x80000000),ExStyle=0x08000080});
+    public Host(bool offscreenProbe=false){probe=offscreenProbe;hole=new BlackHole(glass.data.pitch);ink=new InkSplash(glass.data);effect=glass;CreateHandle(new CreateParams{Caption=probe?"HAHHAN Effect Probe":"HAHHAN Glass Host",Style=unchecked((int)0x80000000),ExStyle=0x08000080});
         if(probe){bounds=new Rectangle(-30000,-30000,1920,720);return;}
         WTSRegisterSessionNotification(Handle,0);discovery.Interval=1500;discovery.Tick+=delegate{Discover();};Discover();discovery.Start();}
     public void ProbeStrike(int fps){if(!probe)throw new InvalidOperationException();glass.tuning.heal=1000;glass.tuning.delay=0;frameInterval=1000.0/fps;Strike(glass.scans[30]);glass.Release(glass.scans[30]);if(!surface.DesktopOnly)throw new InvalidOperationException("桌面叠加窗口位置或样式不正确");}
@@ -172,12 +182,15 @@ internal sealed class Host : NativeWindow,IDisposable
                 var casting=VideoLease.Target(outputs,choice.Id);
                 if(casting!=null){player=VideoLease.Player(casting.Id);target=player==IntPtr.Zero?null:casting;}
             }
-            if(target==null){if(activeId!=null||registered)Detach();return;}
+            if(target==null||CalibrationGuide.ActiveOn(target.Id)){if(activeId!=null||registered)Detach();return;}
             if(activeId!=target.Id||bounds!=target.Bounds||surface.VideoPlayer!=player){Detach();activeId=target.Id;bounds=target.Bounds;surface.VideoPlayer=player;}
+            if(glass.geometry.Sync(target.Id))Idle();
             surface.SampleWallpaper=player==IntPtr.Zero&&Project.WallpaperIntegration;
-            IKeyEffect next=choice.Effect==BlackHole.Id?(IKeyEffect)hole:glass;
+            IKeyEffect next=choice.Effect==InkSplash.Id?(IKeyEffect)ink:choice.Effect==BlackHole.Id?(IKeyEffect)hole:glass;
             if(next!=effect){StopFrames();effect.Clear();surface.Hide();effect=next;}
-            if(effect==hole)hole.power=Project.HolePower();else glass.tuning=Project.ReadTuning();
+            if(effect==ink)ink.tuning=InkTuning.Read();
+            if(effect==hole){hole.power=Project.HolePower();hole.rimColor=Project.RimColor(true);}
+            if(effect==glass){glass.tuning=Project.ReadTuning();glass.rimColor=Project.RimColor(false);}
             frameInterval=1000.0/Project.Fps();Enable(true);
             if(!registered)Idle();surface.Place();
         }catch(Exception e){Detach();Trace.TraceWarning(e.Message);}

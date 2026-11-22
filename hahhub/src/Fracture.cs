@@ -52,6 +52,8 @@ internal sealed class Pattern {public float[][] segments{get;set;} public Facet[
 internal sealed class GlassData {public float pitch{get;set;} public float axisSize{get;set;} public LayoutKey[] keys{get;set;} public Pattern[] shapes{get;set;} public Pattern[] largeShapes{get;set;}}
 internal sealed class Glass : IKeyEffect,IDisposable
 {
+    public const int DefaultRim=0xe6f1ff;
+    public int rimColor=DefaultRim;
     sealed class Hit {
         public LayoutKey key;public Pattern shape;public PointF origin;public float scale,baseReach;public int density;
         public double pressed,released=-1,mend,expires;public bool large;public bool fresh=true;
@@ -75,7 +77,8 @@ internal sealed class Glass : IKeyEffect,IDisposable
             mend=Math.Max(turn,first.mend);
         }
     }
-    public readonly GlassData data;
+    readonly GlassOptics optics=new GlassOptics();
+    public readonly GlassData data;public readonly KeyGeometry geometry;
     public readonly Dictionary<int,LayoutKey> scans;
     readonly Dictionary<string,Hit> hits=new Dictionary<string,Hit>();
     readonly List<Joint> joints=new List<Joint>();
@@ -91,6 +94,7 @@ internal sealed class Glass : IKeyEffect,IDisposable
         data=Project.Json.Deserialize<GlassData>(text.Substring(prefix.Length,text.Length-prefix.Length-1));
         if(data.keys.Length!=84||data.shapes.Length==0||data.largeShapes==null||data.largeShapes.Length!=data.shapes.Length||data.shapes.Concat(data.largeShapes).Any(p=>p.segments==null))throw new InvalidDataException("碎裂路径与程序版本不一致");
         foreach(var shape in data.shapes.Concat(data.largeShapes))foreach(var facet in shape.facets)facet.Prepare();
+        geometry=new KeyGeometry(data);
         scans=data.keys.Where(k=>k.scan!=0).ToDictionary(k=>k.scan);
     }
     static float Dist(PointF a,PointF b){float x=a.X-b.X,y=a.Y-b.Y;return (float)Math.Sqrt(x*x+y*y);}
@@ -137,7 +141,7 @@ internal sealed class Glass : IKeyEffect,IDisposable
             var shapes=tuning.crackSize==0?data.largeShapes:data.shapes;
             hit=new Hit{key=key,pressed=now,large=tuning.crackSize==0,shape=shapes[(key.scan*31+3)%shapes.Length],
                 origin=new PointF(key.x*1920/(720*data.pitch),key.y/data.pitch),scale=tuning.spread/100f,density=tuning.density};
-            hit.baseReach=hit.shape.Contact(data.axisSize*.25f/(720*data.pitch*hit.scale),hit.density);
+            hit.baseReach=hit.shape.Contact(Math.Min(key.stem.Width,key.stem.Height)*.5f/(720*data.pitch*hit.scale),hit.density);
             hits.Add(key.code,hit);
         }
         Connect(hit,now);
@@ -151,7 +155,7 @@ internal sealed class Glass : IKeyEffect,IDisposable
         foreach(var key in hits.Where(x=>x.Value.released>=0&&now>=x.Value.expires).Select(x=>x.Key).ToArray())hits.Remove(key);
         joints.RemoveAll(j=>!hits.ContainsKey(j.from.key.code)||!hits.ContainsKey(j.to.key.code));
     }
-    public void Clear(){hits.Clear();joints.Clear();}
+    public void Clear(){hits.Clear();joints.Clear();optics.Dispose();}
     public void Dispose(){Clear();}
     Rectangle Area(PointF p,float radius,int w,int h){
         float sx=720*data.pitch*w/1920,sy=data.pitch*h;
@@ -159,7 +163,7 @@ internal sealed class Glass : IKeyEffect,IDisposable
             (int)Math.Ceiling((p.X+radius)*sx)+3,(int)Math.Ceiling((p.Y+radius)*sy)+3);
     }
     public Rectangle Bounds(int w,int h){
-        double now=clock();Expire(now);var area=Rectangle.Empty;
+        double now=clock();Expire(now);if(hits.Count==0)optics.Dispose();var area=Rectangle.Empty;
         foreach(var hit in hits.Values){
             var r=Area(hit.origin,(.12f+1.72f*hit.Reach(now))*hit.scale,w,h);
             area=area.IsEmpty?r:Rectangle.Union(area,r);
@@ -203,15 +207,17 @@ internal sealed class Glass : IKeyEffect,IDisposable
     sealed class Ink {
         readonly List<PointF>[] points={new List<PointF>(),new List<PointF>(),new List<PointF>()};
         public void Line(int style,PointF a,PointF b){points[style].Add(a);points[style].Add(b);}
-        public void Paint(Graphics g,float opacity,float unit,Color lightColor){
+        public void Paint(Graphics g,float opacity,float unit,Color ambient,Color rim){
+            var lightColor=Color.FromArgb((rim.R*3+ambient.R)/4,(rim.G*3+ambient.G)/4,(rim.B*3+ambient.B)/4);
             for(int k=0;k<points.Length;k++){
                 var pts=points[k];if(pts.Count<2)continue;
                 var kinds=new byte[pts.Count];for(int i=1;i<kinds.Length;i+=2)kinds[i]=1;
                 float darkWidth=k==0?2.05f:k==1?1.35f:.85f,lightWidth=k==0?.92f:k==1?.64f:.43f;
                 using(var path=new GraphicsPath(pts.ToArray(),kinds))
+                using(var halo=new Pen(Color.FromArgb((int)(opacity*(k==0?62:32)),rim),(darkWidth+2.3f)*unit))
                 using(var dark=new Pen(Color.FromArgb((int)(opacity*(k==2?150:215)),9,19,29),darkWidth*unit))
                 using(var light=new Pen(Color.FromArgb((int)(opacity*(k==0?244:k==1?201:150)),lightColor),lightWidth*unit)){
-                    g.DrawPath(dark,path);var state=g.Save();
+                    g.DrawPath(halo,path);g.DrawPath(dark,path);var state=g.Save();
                     g.TranslateTransform(.55f*unit,-.52f*unit);g.DrawPath(light,path);g.Restore(state);
                 }
             }
@@ -223,48 +229,27 @@ internal sealed class Glass : IKeyEffect,IDisposable
         Func<PointF,PointF> screen=p=>new PointF(p.X*sx-dx,p.Y*sy-dy);
         g.SmoothingMode=SmoothingMode.AntiAlias;
         var neutral=Color.FromArgb(238,246,252);
-        var region=new Rectangle(0,0,sample.Width,sample.Height);
-        using(var attributes=new ImageAttributes()){
-        attributes.SetColorMatrix(new ColorMatrix{Matrix33=.47f});
-        using(var mirror=wallpaper==null?null:new TextureBrush(wallpaper,region,attributes))
-        using(var lens=wallpaper==null?null:new TextureBrush(wallpaper,WrapMode.Clamp,region)){
+        var rim=Color.FromArgb(unchecked((int)0xff000000)|rimColor);
         foreach(var hit in hits.Values){
             float front=hit.Reach(now);
             var origin=screen(hit.origin);float xscale=sx*hit.scale,yscale=sy*hit.scale;
             float radius=FrontRadius(hit,front,sx,sy);
-            var faceState=g.Save();
-            using(var guard=new GraphicsPath()){
-                if(radius>.01f)guard.AddEllipse(origin.X-radius,origin.Y-radius,2*radius,2*radius);
-                g.SetClip(guard,CombineMode.Intersect);
-            }
-            foreach(var facet in hit.shape.facets){
-                if(front<=facet.enter)continue;
-                float opacity=Math.Min(1,(front-facet.enter)*14);
-                var polygon=facet.Visible(front,origin,xscale,yscale);
-                if(polygon.Length<3)continue;
-                if(lens!=null){
-                    float shift=(7+10*Math.Abs(facet.tone))*unit*opacity;
-                    lens.ResetTransform();lens.TranslateTransform(sample.X-dx+facet.nx*shift,sample.Y-dy+facet.ny*shift);
-                    g.FillPolygon(lens,polygon);
-                    // A tilted shard reflects the opposite side of the impact, over its transmitted image.
-                    float nx=facet.nx,ny=facet.ny,u=1-2*nx*nx,v=-2*nx*ny,z=1-2*ny*ny;
-                    float ox=sample.X-dx-origin.X,oy=sample.Y-dy-origin.Y,offset=(31+20*Math.Abs(facet.tone))*unit;
-                    using(var transform=new Matrix(u,v,v,z,origin.X+u*ox+v*oy+nx*offset,origin.Y+v*ox+z*oy+ny*offset)){
-                        mirror.Transform=transform;mirror.WrapMode=WrapMode.Clamp;g.FillPolygon(mirror,polygon);
-                    }
-                    var light=Glint(Sample(wallpaper,sample,origin.X+dx+nx*offset,origin.Y+dy+ny*offset));
-                    var box=new RectangleF(origin.X+facet.bounds.X*xscale,origin.Y+facet.bounds.Y*yscale,
-                        Math.Max(1,facet.bounds.Width*xscale),Math.Max(1,facet.bounds.Height*yscale));
-                    using(var sheen=new LinearGradientBrush(box,Color.FromArgb((int)(opacity*(78+28*Math.Abs(facet.tone))),light),
-                        Color.FromArgb((int)(opacity*24),8,14,23),(float)(Math.Atan2(ny,nx)*180/Math.PI))){
-                        g.FillPolygon(sheen,polygon);
-                    }
-                    continue;
+            if(wallpaper!=null)optics.Draw(g,wallpaper,sample,origin,xscale,yscale,radius,front,hit.shape,unit,dx,dy);
+            else{
+                var faceState=g.Save();
+                using(var guard=new GraphicsPath()){
+                    if(radius>.01f)guard.AddEllipse(origin.X-radius,origin.Y-radius,2*radius,2*radius);
+                    g.SetClip(guard,CombineMode.Intersect);
                 }
-                using(var fill=new SolidBrush(Color.FromArgb((int)((14+23*Math.Abs(facet.tone))*opacity),facet.tone>=0?Color.FromArgb(214,229,241):Color.FromArgb(10,20,33))))
-                    g.FillPolygon(fill,polygon);
+                foreach(var facet in hit.shape.facets){
+                    if(front<=facet.enter)continue;
+                    var polygon=facet.Visible(front,origin,xscale,yscale);
+                    if(polygon.Length<3)continue;
+                    using(var fill=new SolidBrush(Color.FromArgb((int)(14+23*Math.Abs(facet.tone)),facet.tone>=0?Color.FromArgb(214,229,241):Color.FromArgb(10,20,33))))
+                        g.FillPolygon(fill,polygon);
+                }
+                g.Restore(faceState);
             }
-            g.Restore(faceState);
             var ink=new Ink();
             foreach(var e in hit.shape.segments){
                 if(e[0]>=front)break;if(e[7]>hit.density)continue;
@@ -272,15 +257,15 @@ internal sealed class Glass : IKeyEffect,IDisposable
                 ink.Line((int)e[6],a,new PointF(a.X+f*(e[4]-e[2])*xscale,a.Y+f*(e[5]-e[3])*yscale));
             }
             var edgeLight=wallpaper==null?neutral:Glint(Sample(wallpaper,sample,origin.X+dx-24*unit,origin.Y+dy-32*unit));
-            ink.Paint(g,1,unit*(hit.large?1.24f:1),edgeLight);
-        }}}
+            ink.Paint(g,1,unit*(hit.large?1.24f:1),edgeLight,rim);
+        }
         foreach(var j in joints){
             var ink=new Ink();float remaining=j.Reach(now);
             for(int i=1;i<j.points.Length&&remaining>0;i++){
                 var a=j.points[i-1];var b=j.points[i];float len=Dist(a,b);
                 ink.Line(1,screen(a),screen(Lerp(a,b,Math.Min(1,remaining/Math.Max(.00001f,len)))));remaining-=len;
             }
-            ink.Paint(g,1,unit,neutral);
+            ink.Paint(g,1,unit,neutral,rim);
         }
     }
 }

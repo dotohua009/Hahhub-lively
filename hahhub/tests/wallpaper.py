@@ -6,7 +6,7 @@ from playwright.sync_api import sync_playwright
 root = Path(__file__).resolve().parents[1]
 wall = root / "effects" / "hahhan-glass"
 params = json.loads((wall / "LivelyProperties.json").read_text(encoding="utf-8-sig"))
-assert set(params) == {"density", "spread", "heal", "delay", "crackSize","fps"}
+assert set(params) == {"density", "spread", "heal", "delay", "crackSize","fps","rim"}
 with sync_playwright() as p:
     browser = p.chromium.launch(channel="msedge", headless=True)
     page = browser.new_page(viewport={"width": 1920, "height": 720})

@@ -50,5 +50,10 @@
       "60 FPS"
     ],
     "value": 3
+  },
+  "rim": {
+    "type": "color",
+    "text": "边缘辉光",
+    "value": "#e6f1ff"
   }
 }

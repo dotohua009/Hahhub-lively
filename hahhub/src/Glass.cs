@@ -25,7 +25,7 @@ internal static class Project
     public static OutputChoice ReadChoice(){
         if(!File.Exists(ChoiceFile))return new OutputChoice();
         var choice=Json.Deserialize<OutputChoice>(File.ReadAllText(ChoiceFile))??new OutputChoice();
-        if(!string.IsNullOrEmpty(choice.Effect)&&choice.Effect!=Id&&choice.Effect!=BlackHole.Id)choice.Effect=BlackHole.Id;
+        if(!string.IsNullOrEmpty(choice.Effect)&&choice.Effect!=Id&&choice.Effect!=BlackHole.Id&&choice.Effect!=InkSplash.Id)choice.Effect=BlackHole.Id;
         return choice;
     }
     public static void SaveChoice(OutputChoice choice){Atomic(ChoiceFile,Json.Serialize(choice));}
@@ -45,6 +45,19 @@ internal static class Project
         Atomic(TuningFile,Json.Serialize(t));
     }
     public static string HolePowerPath {get{return Path.Combine(Data,"blackhole-power.txt");}}
+    static string RimPath(bool hole){return Path.Combine(Data,hole?"blackhole-rim.txt":"glass-rim.txt");}
+    public static int RimColor(bool hole){
+        var path=RimPath(hole);
+        if(File.Exists(path)){
+            int rgb;var hex=File.ReadAllText(path).Trim();
+            if(hex.Length==6&&int.TryParse(hex,System.Globalization.NumberStyles.AllowHexSpecifier,System.Globalization.CultureInfo.InvariantCulture,out rgb))return rgb;
+        }
+        return hole?BlackHole.DefaultRim:Glass.DefaultRim;
+    }
+    public static void SaveRim(bool hole,int rgb){
+        if(rgb<0||rgb>0xffffff)throw new ArgumentOutOfRangeException("rgb");
+        Atomic(RimPath(hole),rgb.ToString("X6"));
+    }
     public static int HolePower(){int n;return File.Exists(HolePowerPath)&&int.TryParse(File.ReadAllText(HolePowerPath),out n)&&n>=20&&n<=100?n:80;}
     public static string ProfilePath {get{return Path.Combine(Data,"fps.txt");}}
     public static bool WallpaperIntegration{
@@ -54,4 +67,4 @@ internal static class Project
     public static int Fps(){int value;return File.Exists(ProfilePath)&&int.TryParse(File.ReadAllText(ProfilePath),out value)&&(value==16||value==24||value==30||value==60)?value:16;}
 
 }
-internal sealed class LayoutKey {public string code{get;set;} public int scan{get;set;} public float x{get;set;} public float y{get;set;}}
+internal sealed class LayoutKey {internal RectangleF cap,housing,stem;public float w{get;set;} public string code{get;set;} public int scan{get;set;} public float x{get;set;} public float y{get;set;}}

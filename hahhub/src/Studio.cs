@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Diagnostics;
@@ -17,11 +17,11 @@ using System.Windows.Threading;
 using ImageView=System.Windows.Controls.Image;
 using Forms=System.Windows.Forms;
 
-internal sealed class Studio
+internal sealed partial class Studio
 {
     public readonly Window window;
     readonly Glass glass=new Glass();
-    readonly BlackHole hole;string selectedId=Project.Id;IKeyEffect effect;bool selecting,holeDirty;
+    readonly BlackHole hole;readonly InkSplash ink;string selectedId=Project.Id;IKeyEffect effect;bool selecting,holeDirty,inkDirty;
     readonly DispatcherTimer preview=new DispatcherTimer(),status=new DispatcherTimer();
     int fps;
     bool dirty;
@@ -37,34 +37,30 @@ internal sealed class Studio
     string updateMessage="Check for a new version.";
     readonly Button targetButton;
     readonly Button applyButton;
-    [StructLayout(LayoutKind.Sequential)] struct Margins{public int left,right,top,bottom;}
-    [DllImport("dwmapi.dll")] static extern int DwmExtendFrameIntoClientArea(IntPtr h,ref Margins m);
-    [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h,int a,ref int value,int cb);
     [DllImport("user32.dll")] static extern uint MapVirtualKey(uint key,uint type);
-    [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h,int index);
-    [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr h,int index,int value);
     T Get<T>(string id) where T:FrameworkElement{return (T)window.FindName(id);}
     static BitmapImage ImageFile(string path){var b=new BitmapImage();b.BeginInit();b.CacheOption=BitmapCacheOption.OnLoad;b.UriSource=new Uri(path);b.EndInit();b.Freeze();return b;}
     void Note(string msg){Get<TextBlock>("Feedback").Text=msg;}
     public Studio(){
-        hole=new BlackHole(glass.data.pitch);effect=glass;
+        hole=new BlackHole(glass.data.pitch);ink=new InkSplash(glass.data);effect=glass;
         using(var f=File.OpenRead(Path.Combine(Project.Base,"Studio.xaml")))window=(Window)XamlReader.Load(f);
         UiText.Load();
         UiText.Apply(window);
         window.ShowInTaskbar=false;
         window.Icon=BitmapFrame.Create(new Uri(Path.Combine(Project.Base,"studio.ico")));
-        System.Windows.Shell.WindowChrome.SetWindowChrome(window,new System.Windows.Shell.WindowChrome{
-            CaptionHeight=32,GlassFrameThickness=new Thickness(-1),UseAeroCaptionButtons=true,
-            ResizeBorderThickness=SystemParameters.WindowResizeBorderThickness,CornerRadius=new CornerRadius(0)});
-        window.SourceInitialized+=delegate{
-            var h=new WindowInteropHelper(window).Handle;int dark=1,material=3,caption=0x221E1C,text=0xF1EEEB;DwmSetWindowAttribute(h,20,ref dark,4);
-            SetWindowLong(h,-20,(GetWindowLong(h,-20)&~0x40000)|0x80); // Keep the interactive panel out of Alt+Tab.
-            DwmSetWindowAttribute(h,35,ref caption,4);DwmSetWindowAttribute(h,36,ref text,4);
-            if(DwmSetWindowAttribute(h,38,ref material,4)==0){var m=new Margins{left=-1,right=-1,top=-1,bottom=-1};DwmExtendFrameIntoClientArea(h,ref m);HwndSource.FromHwnd(h).CompositionTarget.BackgroundColor=Colors.Transparent;}
-        };
+        new StudioFrame(window);
         Get<ImageView>("Cover").Source=ImageFile(Path.Combine(Project.Base,"cover.jpg"));
         Get<ImageView>("Tile").Source=ImageFile(Path.Combine(Project.Pack(),"thumbnail.jpg"));
         Get<ImageView>("HoleImage").Source=ImageFile(Path.Combine(Project.Base,"effects",BlackHole.Id,"thumbnail.jpg"));
+        Get<ImageView>("InkImage").Source=ImageFile(Path.Combine(Project.Base,"effects",InkSplash.Id,"thumbnail.jpg"));
+        glass.rimColor=Project.RimColor(false);hole.rimColor=Project.RimColor(true);
+        InitPalette();InitAlignment();
+        ink.tuning=InkTuning.Read();Get<Slider>("Spray").Value=ink.tuning.spread;Get<Slider>("Dry").Value=ink.tuning.recovery;
+        UpdateInkLabels();foreach(var n in new[]{"Spray","Dry"})Get<Slider>(n).ValueChanged+=delegate{
+            ink.tuning.spread=(int)Get<Slider>("Spray").Value;ink.tuning.recovery=(int)Get<Slider>("Dry").Value;
+            UpdateInkLabels();inkDirty=true;Note(UiText.T("Preview updated."));
+        };
+        Get<Button>("ChooseRim").Click+=delegate{ChooseRim();};
         try{glass.tuning=Project.ReadTuning();}catch(IOException){}
         Get<Slider>("Density").Value=glass.tuning.density;Get<Slider>("Spread").Value=glass.tuning.spread;Get<Slider>("Heal").Value=glass.tuning.heal;
         Get<Slider>("Delay").Value=glass.tuning.delay;
@@ -76,9 +72,9 @@ internal sealed class Studio
         Get<TextBlock>("PullNum").Text=hole.power+"%";
         Get<Slider>("Pull").ValueChanged+=delegate{hole.power=(int)Get<Slider>("Pull").Value;Get<TextBlock>("PullNum").Text=hole.power+"%";holeDirty=true;Note(UiText.T("Pull strength updated in preview."));};
         ShowEffect(Project.ReadChoice().Effect);
-        foreach(var name in new[]{"HoleTile","GlassTile"})Get<RadioButton>(name).Checked+=delegate{
+        foreach(var name in new[]{"HoleTile","GlassTile","InkTile"})Get<RadioButton>(name).Checked+=delegate{
             if(selecting)return;
-            var id=name=="HoleTile"?BlackHole.Id:Project.Id;
+            var id=name=="InkTile"?InkSplash.Id:name=="HoleTile"?BlackHole.Id:Project.Id;
             try{var choice=Project.ReadChoice();choice.Effect=id;Project.SaveChoice(choice);Host.NotifySettings();ShowEffect(id);
                 if(!Get<Grid>("EffectView").IsVisible)ShowPage("EffectView");
                 if(choice.Enabled)Program.EnsureHost();
@@ -124,7 +120,7 @@ internal sealed class Studio
             try{UiText.Save(useChinese);}
             catch(Exception error){(UiText.Chinese?chinese:english).IsChecked=true;MessageBox.Show(window,error.Message,window.Title);return;}
             UiText.Apply(window);
-            Get<TextBlock>("EffectTitle").Text=UiText.T(selectedId==BlackHole.Id?"Black Hole":"Fracture");
+            Get<TextBlock>("EffectTitle").Text=UiText.T(EffectName);
             Get<Button>("BackToEffect").Content=UiText.T(videoTile.IsChecked==true?"Back to video":"Back to effects");
             Get<Button>("PauseVideo").Content=UiText.T(video!=null&&video.Paused?"Resume":"Pause");
             var feedback=Get<TextBlock>("Feedback");feedback.Text=UiText.Retranslate(feedback.Text);
@@ -141,14 +137,16 @@ internal sealed class Studio
         };
         support.Checked+=saveSupport;support.Unchecked+=saveSupport;
         Get<Button>("BackToEffect").Click+=delegate{ShowPage(videoTile.IsChecked==true?"VideoView":"EffectView");};
-        foreach(var tile in new[]{"GlassTile","HoleTile"})Get<RadioButton>(tile).Click+=delegate{
+        foreach(var tile in new[]{"GlassTile","HoleTile","InkTile"})Get<RadioButton>(tile).Click+=delegate{
             if(!Get<Grid>("EffectView").IsVisible)ShowPage("EffectView");
         };
         window.PreviewKeyDown+=delegate(object sender,KeyEventArgs e){
+            if(Get<Grid>("EditorShade").Visibility==Visibility.Visible){EditorKey(e);return;}
             if(e.Key==Key.Escape&&Get<Grid>("SettingsView").IsVisible){ShowPage(videoTile.IsChecked==true?"VideoView":"EffectView");e.Handled=true;}
         };
         Get<Button>("Community").Click+=delegate{try{Process.Start(new ProcessStartInfo("https://github.com/lively-community/lively/discussions"){UseShellExecute=true});}catch(Exception e){Note(e.Message);}};
         var hero=Get<Grid>("Hero");LayoutKey mouseKey=null;
+        hero.SizeChanged+=delegate{hero.Clip=new RectangleGeometry(new Rect(hero.RenderSize),11,11);};
         hero.MouseLeftButtonDown+=delegate(object sender,MouseButtonEventArgs e){
             hero.Focus();hero.CaptureMouse();var pt=e.GetPosition(hero);
             mouseKey=glass.data.keys.OrderBy(k=>Math.Pow(k.x*hero.ActualWidth-pt.X,2)+Math.Pow(k.y*hero.ActualHeight-pt.Y,2)).First();TestHit(mouseKey);};
@@ -158,7 +156,7 @@ internal sealed class Studio
         hero.KeyUp+=delegate(object sender,KeyEventArgs e){var k=PreviewKey(e);if(k!=null){ReleasePreview(k);e.Handled=true;}};
         hero.LostKeyboardFocus+=delegate{effect.Clear();};
         preview.Tick+=delegate{PreviewFrame();};status.Interval=TimeSpan.FromSeconds(2);status.Tick+=delegate{Refresh();};
-        window.Loaded+=delegate{Refresh();status.Start();};window.Closed+=delegate{preview.Stop();status.Stop();if(video!=null)video.Close();glass.Dispose();hole.Dispose();if(previewCover!=null)previewCover.Dispose();};
+        window.Loaded+=delegate{Refresh();status.Start();};window.Closed+=delegate{preview.Stop();status.Stop();if(video!=null)video.Close();glass.Dispose();hole.Dispose();ink.Clear();if(previewCover!=null)previewCover.Dispose();};
         UpdateTuning();UpdateRate();Note(UiText.T("Effects appear on the selected display."));
     }
     public void OpenPanel(){
@@ -257,18 +255,32 @@ internal sealed class Studio
             if(session.IsDisposed&&video==session){video=null;Get<Button>("StopVideo").IsEnabled=false;feedback.Text=session.Result;}
         }catch(Exception e){feedback.Text=e.Message;}
     }
+    string EffectName{get{return effect==ink?"Ink Splash":effect==hole?"Black Hole":"Fracture";}}
+    void PaintSwatch(){
+        int rgb=effect==hole?hole.rimColor:glass.rimColor;
+        Get<Border>("RimSwatch").Background=new SolidColorBrush(System.Windows.Media.Color.FromRgb((byte)(rgb>>16),(byte)(rgb>>8),(byte)rgb));
+        Get<TextBlock>("RimHex").Text="#"+rgb.ToString("X6");
+    }
     void ShowEffect(string id){
         selecting=true;
         try{
-            bool useHole=id==BlackHole.Id;selectedId=useHole?BlackHole.Id:Project.Id;preview.Stop();effect.Clear();effect=useHole?(IKeyEffect)hole:glass;
-            Get<ImageView>("LivePreview").Source=null;Get<TextBlock>("EffectTitle").Text=useHole?UiText.T("Black Hole"):UiText.T("Fracture");
-            Get<RadioButton>(useHole?"HoleTile":"GlassTile").IsChecked=true;
-            Get<Border>("GlassPanel").Visibility=effect!=glass?Visibility.Collapsed:Visibility.Visible;
-            Get<Border>("HolePanel").Visibility=useHole?Visibility.Visible:Visibility.Collapsed;
+            bool useHole=id==BlackHole.Id,useInk=id==InkSplash.Id;selectedId=useInk?InkSplash.Id:useHole?BlackHole.Id:Project.Id;
+            preview.Stop();effect.Clear();effect=useInk?(IKeyEffect)ink:useHole?(IKeyEffect)hole:glass;
+            Get<ImageView>("LivePreview").Source=null;Get<TextBlock>("EffectTitle").Text=UiText.T(EffectName);
+            Get<RadioButton>(useInk?"InkTile":useHole?"HoleTile":"GlassTile").IsChecked=true;
+            Get<StackPanel>("GlassPanel").Visibility=effect==glass?Visibility.Visible:Visibility.Collapsed;
+            Get<StackPanel>("HolePanel").Visibility=useHole?Visibility.Visible:Visibility.Collapsed;
+            Get<StackPanel>("InkPanel").Visibility=useInk?Visibility.Visible:Visibility.Collapsed;
+            Get<Grid>("RimRow").Visibility=useInk?Visibility.Collapsed:Visibility.Visible;
+            PaintSwatch();
         }finally{selecting=false;}
+    }
+    void UpdateInkLabels(){
+        Get<TextBlock>("SprayNum").Text=ink.tuning.spread+"%";Get<TextBlock>("DryNum").Text=(ink.tuning.recovery/1000.0).ToString("0.0")+" s";
     }
     void SaveSettings(){
         if(effect==hole){Project.Atomic(Project.HolePowerPath,hole.power.ToString());holeDirty=false;}
+        else if(effect==ink){ink.tuning.Save();inkDirty=false;}
         else{Project.SaveTuning(glass.tuning);dirty=false;}
         Host.NotifySettings();
     }
@@ -318,6 +330,7 @@ internal sealed class Studio
     void Refresh(){
         try{
             var saved=Project.ReadChoice();var screens=Choices(saved);
+            if(guide!=null&&!screens.Any(d=>d.Usable&&Same(d.Id,guide.target.Id)&&d.Bounds==guide.target.Bounds))CloseEditor();
             var videoTarget=screens.FirstOrDefault(x=>Same(x.Id,videoTargetId??saved.Id));
             Get<Button>("VideoTarget").Content=(videoTarget==null?UiText.T("Select display"):videoTarget.ToString())+"  ▾";
             if(video!=null)video.CheckOutput();
@@ -332,6 +345,7 @@ internal sealed class Studio
                 preferred?UiText.T("Effects sample the live wallpaper. Casting temporarily switches the source to video."):UiText.T("Wallpaper sampling is off.");
             var live=screens.FirstOrDefault(x=>Same(x.Id,saved.Id));
             var pick=screens.FirstOrDefault(x=>Same(x.Id,pendingId??saved.Id));
+            if(glass.geometry.Sync(castingTarget!=null?castingTarget.Id:pick==null?null:pick.Id)){effect.Clear();Get<ImageView>("LivePreview").Source=null;}
             bool current=pick!=null&&Same(pick.Id,saved.Id);
             targetButton.Content=(pick==null?UiText.T("Select display"):pick.ToString())+"  ▾";
             targetButton.ToolTip=UiText.T("Choose a display for keyboard effects");
@@ -350,7 +364,7 @@ internal sealed class Studio
             bool enable=!(Same(pick.Id,saved.Id)&&saved.Enabled);
             if(enable&&!pick.Usable&&(!Same(pick.Id,saved.Id)||pick.Mirrored))throw new IOException(UiText.T("This display cannot show effects independently."));
             if(enable){
-                if(effect==hole?holeDirty:dirty)SaveSettings();
+                if((effect==hole&&holeDirty)||(effect==glass&&dirty)||(effect==ink&&inkDirty))SaveSettings();
                 Program.EnsureHost();
             }
             Project.SaveChoice(new OutputChoice{Id=pick.Id,Label=pick.Label,Enabled=enable,Effect=selectedId});Host.NotifySettings();pendingId=null;

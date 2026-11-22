@@ -1,8 +1,10 @@
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 // Prefer the player surface. A DX11 swap chain can require the exposed desktop compositor instead.
 internal sealed class WallpaperFrame : IDisposable
@@ -16,6 +18,8 @@ internal sealed class WallpaperFrame : IDisposable
     [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr window,ref Point point);
     [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr window);
     [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr window,IntPtr dc);
+    [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr window,IntPtr dc,uint flags);
+    [DllImport("user32.dll")] static extern bool IsHungAppWindow(IntPtr window);
     [DllImport("gdi32.dll")] static extern bool BitBlt(IntPtr dest,int x,int y,int w,int h,IntPtr source,int sx,int sy,uint operation);
 
     [DllImport("user32.dll")] static extern bool SetWindowDisplayAffinity(IntPtr window,uint affinity);
@@ -28,6 +32,7 @@ internal sealed class WallpaperFrame : IDisposable
     [DllImport("user32.dll")] static extern bool EnumWindows(Visit callback,IntPtr data);
 
     Bitmap buffer;Surface.Dib capture;
+    VideoFrames videoFrames;
     [DllImport("gdi32.dll")] static extern bool GdiFlush();
     IntPtr excluded,lastPlayer;bool composite;
     static bool Exposed(Rectangle region,IntPtr overlay,IntPtr anchor){
@@ -80,20 +85,64 @@ internal sealed class WallpaperFrame : IDisposable
             if(capture!=null){w=Math.Max(w,buffer.Width);h=Math.Max(h,buffer.Height);capture.Dispose();capture=null;buffer=null;}
             capture=new Surface.Dib(new Size(w,h),PixelFormat.Format32bppRgb);buffer=capture.bitmap;
         }
+        if(video!=IntPtr.Zero){
+            if(client!=screen)return null;
+            if(lastPlayer!=video||videoFrames==null||videoFrames.Size!=client.Size){
+                if(videoFrames!=null)videoFrames.Dispose();
+                videoFrames=new VideoFrames(video,client.Size);lastPlayer=video;
+            }
+            return videoFrames.CopyLatest(capture.dc,region)?buffer:null;
+        }
         if(player!=lastPlayer){
             var name=new StringBuilder(128);GetClassName(player,name,name.Capacity);
-            composite=video!=IntPtr.Zero||name.ToString()=="WPEDesktopDX11Window";lastPlayer=player;
+            composite=name.ToString()=="WPEDesktopDX11Window";lastPlayer=player;
         }
         var position=new Point(screen.X+region.X,screen.Y+region.Y);
         if(!composite&&Copy(player,new Point(position.X-client.X,position.Y-client.Y),region.Size)&&HasColor(region.Size))return buffer;
         if(overlay==IntPtr.Zero)return null;
-        var anchor=video!=IntPtr.Zero?video:Surface.DesktopAnchor();
+        var anchor=Surface.DesktopAnchor();
         var visible=new Rectangle(position,region.Size);if(!Exposed(visible,overlay,anchor))return null;
         if(excluded!=overlay){
             if(!SetWindowDisplayAffinity(overlay,0x11))return null;
             excluded=overlay;DwmFlush();
         }
         return Copy(IntPtr.Zero,position,region.Size)&&Exposed(visible,overlay,anchor)?buffer:null;
+    }
+    sealed class VideoFrames : IDisposable {
+        public readonly Size Size;
+        readonly IntPtr player;
+        readonly object gate=new object();
+        readonly Stopwatch age=new Stopwatch();
+        Surface.Dib front,back;
+        bool pending,ready,closed;
+        public VideoFrames(IntPtr player,Size size){
+            this.player=player;Size=size;
+            front=new Surface.Dib(size,PixelFormat.Format32bppRgb);
+            try{back=new Surface.Dib(size,PixelFormat.Format32bppRgb);}catch{front.Dispose();throw;}
+        }
+        public bool CopyLatest(IntPtr dest,Rectangle region){
+            lock(gate){
+                if(!pending&&(!age.IsRunning||age.Elapsed.TotalMilliseconds>=1000.0/30)){
+                    pending=true;age.Restart();ThreadPool.QueueUserWorkItem(Capture);
+                }
+                return ready&&BitBlt(dest,0,0,region.Width,region.Height,front.dc,region.X,region.Y,0x00cc0020)&&GdiFlush();
+            }
+        }
+        void Capture(object unused){
+            // PrintWindow waits for WebView2. The key and animation thread uses the last complete frame meanwhile.
+            bool ok=!IsHungAppWindow(player)&&PrintWindow(player,back.dc,3)&&GdiFlush();
+            lock(gate){
+                pending=false;
+                if(closed){back.Dispose();return;}
+                if(ok){var previous=front;front=back;back=previous;ready=true;}
+            }
+        }
+        public void Dispose(){
+            lock(gate){
+                closed=true;front.Dispose();
+                if(!pending)back.Dispose();
+            }
+        }
     }
     bool Copy(IntPtr window,Point point,Size size){
         var dc=GetDC(window);if(dc==IntPtr.Zero)return false;
@@ -110,6 +159,7 @@ internal sealed class WallpaperFrame : IDisposable
         return false;
     }
     public void Dispose(){
+        if(videoFrames!=null){videoFrames.Dispose();videoFrames=null;}
         if(capture!=null){capture.Dispose();capture=null;buffer=null;}
         if(excluded!=IntPtr.Zero){SetWindowDisplayAffinity(excluded,0);excluded=IntPtr.Zero;}
         lastPlayer=IntPtr.Zero;

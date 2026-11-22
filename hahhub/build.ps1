@@ -13,5 +13,5 @@ if($LASTEXITCODE){throw '构建失败'}
 Copy-Item -LiteralPath "$root\tools\apply-update.ps1" -Destination $dest -Force
 Copy-Item -LiteralPath "$root\src\Studio.xaml","$root\src\cover.jpg","$root\src\donation.png","$root\src\studio.ico","$root\LICENSE","$root\README.md","$root\NOTICE.md","$root\install.ps1" -Destination $dest -Force
 Copy-Item -LiteralPath "$root\effects" -Destination $dest -Recurse -Force
-foreach($effect in 'hahhan-glass','hahhan-blackhole'){Copy-Item -LiteralPath "$root\LICENSE","$root\NOTICE.md" -Destination "$dest\effects\$effect" -Force}
+foreach($effect in 'hahhan-glass','hahhan-blackhole','hahhub-ink'){Copy-Item -LiteralPath "$root\LICENSE","$root\NOTICE.md" -Destination "$dest\effects\$effect" -Force}
 

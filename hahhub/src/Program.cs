@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.Diagnostics;
 using System.IO;
@@ -87,6 +87,97 @@ internal static class Program
             Check(reflected>60,"相同灰色底图上的碎片须映出周围冷暖光");
         }
     }
+    static void CheckAnchoredOptics(){
+        var size=new System.Drawing.Size(1920,720);var hit=new Rectangle(660,330,55,32);
+        var viewport=Surface.GlassViewport(hit,size);
+        hit.Inflate(9,9);Check(viewport==Surface.GlassViewport(hit,size)&&viewport.Contains(hit),"局部裂纹生长时保持视频叠加窗口原位");
+        Check(Surface.GlassViewport(new Rectangle(1890,700,30,20),size).Bottom==size.Height,"底部键位限制在键盘屏");
+        var facet=new Facet{enter=0,at=1,tone=.6f,points=new[]{new[]{-60f,-32f},new[]{90f,-32f},new[]{90f,32f},new[]{-60f,32f}}};
+        facet.Prepare();var pattern=new Pattern{facets=new[]{facet}};
+        var screen=new Rectangle(0,0,360,240);var center=new PointF(150,112);
+        using(var background=new Bitmap(screen.Width,screen.Height))
+        using(var first=new Bitmap(screen.Width,screen.Height))
+        using(var next=new Bitmap(screen.Width,screen.Height))
+        using(var optics=new GlassOptics()){
+            for(int y=0;y<background.Height;y++)for(int x=0;x<background.Width;x++)
+                background.SetPixel(x,y,Color.FromArgb(x%2*220,y%3*100,(x+y)%4*75));
+            using(var g=Graphics.FromImage(first))
+                optics.Draw(g,background,screen,center,1,1,100,.30f,pattern,1,0,0);
+            int newPixels=0;
+            for(int frame=1;frame<=24;frame++){
+                var crop=Rectangle.FromLTRB(48-frame,24-frame,320,225);
+                using(var sampled=background.Clone(crop,background.PixelFormat))
+                using(var g=Graphics.FromImage(next)){
+                    g.Clear(Color.Transparent);
+                    optics.Draw(g,sampled,crop,center,1,1,100,.30f+frame*.025f,pattern,1,0,0);
+                }
+                // The crack grows on a still, high-contrast picture as the captured rectangle changes origin.
+                for(int y=92;y<131;y++)for(int x=96;x<126;x++)
+                    Check(first.GetPixel(x,y).A==255&&first.GetPixel(x,y)==next.GetPixel(x,y),"长按生长不能移动已有碎片的纹理或高光");
+            }
+            for(int x=140;x<210;x++)if(first.GetPixel(x,110).A==0&&next.GetPixel(x,110).A==255)newPixels++;
+            Check(newPixels>40,"保持已有碎片时裂尖必须继续生长");
+        }
+    }
+    static void CheckInkAndRims(Glass glass){
+        const int width=640,height=240;
+        double now=0;var a=glass.scans[30];var l=glass.scans[38];
+        var splash=new InkSplash(glass.data,()=>now,new Random(35));
+        int ax=(int)(a.x*width),ay=(int)(a.y*height);
+        splash.Strike(a);splash.Release(a);now=180;splash.Strike(l);splash.Release(l);now=430;
+        var area=splash.Bounds(width,height);
+        Check(area.Contains(ax,ay)&&area.Contains((int)(l.x*width),(int)(l.y*height))&&splash.SampleArea(width,height).IsEmpty,"墨滴落点和免取样");
+        using(var image=new Bitmap(width,height)){
+            using(var g=Graphics.FromImage(image))splash.Draw(g,width,height,0,0,null,Rectangle.Empty);
+            var first=image.GetPixel(ax,ay);var second=image.GetPixel((int)(l.x*width),(int)(l.y*height));
+            Check(first.A>150&&second.A>150&&first!=second&&image.GetPixel((int)((a.x+l.x)*width/2),ay).A==0,"泼墨多键异色与局部透明");
+            using(var overlay=new Surface.Dib(new System.Drawing.Size(width,height),System.Drawing.Imaging.PixelFormat.Format32bppPArgb)){
+                splash.DrawDesktop(overlay,width,height);
+                Check(overlay.bitmap.GetPixel(ax,ay).A>150&&overlay.bitmap.GetPixel((int)(l.x*width),(int)(l.y*height)).A>150&&overlay.bitmap.GetPixel(0,0).A==0,"上屏透明层保留局部墨迹和未覆盖画面");
+            }
+            now=1800;splash.Bounds(width,height);
+            using(var stain=new Surface.Dib(new System.Drawing.Size(width,height),System.Drawing.Imaging.PixelFormat.Format32bppPArgb)){
+                splash.DrawDesktop(stain,width,height);
+                Check(stain.bitmap.GetPixel(ax,ay).A>25&&stain.bitmap.GetPixel(width-1,0).A==0,"飞滴散去后轴心仍然有透明墨染");
+            }
+            Check(InkSplash.Bounce(.40f,.42f,.4f)==.40f&&Math.Abs(InkSplash.Bounce(.62f,.42f,.4f)-.34f)<.0001f
+                &&InkSplash.Bounce(-.62f,.42f,.4f)>-.42f&&InkSplash.Bounce(.62f,3.0f,.4f)==.62f,"碰壁减速反弹且大键使用独立边界");
+            now=3900;Check(splash.Bounds(width,height).IsEmpty&&!splash.Active,"轴染淡去后停止绘制");
+        }
+        splash.tuning.recovery=500;now=4000;splash.Strike(a);splash.Strike(l);splash.Release(l);
+        now+=600;splash.Bounds(width,height);var heldArea=splash.Bounds(width,height);
+        Check(heldArea.Contains(ax,ay)&&!heldArea.Contains((int)(l.x*width),(int)(l.y*height)),"双键释放独立");
+        now+=6000;Check(!splash.Bounds(width,height).IsEmpty,"长按持续发射");splash.Release(a);
+        now+=499;Check(!splash.Bounds(width,height).IsEmpty,"恢复时长");now+=2;Check(splash.Bounds(width,height).IsEmpty&&!splash.Active,"松开后停止");
+        var preset=glass.geometry.Box(new Alignment(),Array.IndexOf(glass.data.keys,a),1);
+        var calibration=new Alignment();calibration.housing.width=123;calibration.stem.x=9;calibration.Local(a.code,1,true).x=13;
+        float original=a.x;glass.geometry.Apply(calibration);
+        Check(Math.Abs(a.cap.Left-preset.Left-13)<.01&&Math.Abs(a.housing.Width-glass.data.axisSize*1.23f)<.01&&Math.Abs((a.x-original)*1920-9)<.01,"三层独立校准");
+        glass.geometry.Apply(calibration);Check(Math.Abs((a.x-original)*1920-9)<.01,"重复加载校准不累计偏移");
+        glass.geometry.Apply(new Alignment());
+        now=0;using(var fracture=new Glass(()=>now))using(var hole=new BlackHole(glass.data.pitch,()=>now)){
+            foreach(var effect in new IKeyEffect[]{fracture,hole}){
+                now=0;effect.Strike(a);now=720;effect.Bounds(width,height);
+                using(var warm=new Bitmap(width,height))using(var cool=new Bitmap(width,height))using(var bg=new Bitmap(width,height)){
+                    using(var g=Graphics.FromImage(bg))g.Clear(Color.Gray);
+                    for(int i=0;i<2;i++){
+                        int color=i==0?0xff2000:0x0020ff;
+                        fracture.rimColor=hole.rimColor=color;
+                        using(var g=Graphics.FromImage(i==0?warm:cool))effect.Draw(g,width,height,0,0,bg,new Rectangle(0,0,width,height));
+                    }
+                    int shifted=0,unchanged=0;
+                    for(int y=0;y<height;y++)for(int x=0;x<width;x++){
+                        var red=warm.GetPixel(x,y);var blue=cool.GetPixel(x,y);
+                        Check(red.A==blue.A,"辉光色不能改变效果轮廓");
+                        if(red.A>30&&red.R-blue.R>18&&blue.B-red.B>18)shifted++;
+                        if(red.A>200&&red==blue)unchanged++;
+                    }
+                    Check(shifted>15&&unchanged>25,"辉光仅点亮边缘并保留内侧底图");
+                    if(effect==hole)Check(warm.GetPixel(ax,ay)==cool.GetPixel(ax,ay)&&warm.GetPixel(ax,ay).R<12,"黑洞内核保持深色");
+                }
+            }
+        }
+    }
     static void CheckBlackHole(Glass glass){
         double now=0;var a=glass.scans[30];var l=glass.scans[38];var hole=new BlackHole(glass.data.pitch,()=>now);
         using(hole){
@@ -140,6 +231,7 @@ internal static class Program
         }
     }
     static void SelfTest(string output){
+        CheckAnchoredOptics();
         var video=VideoLink.Parse("https://www.bilibili.com/video/BV1RqHY6kEHA/?spm_id_from=test&p=2&t=13");
         Check(video.Bilibili&&video.Address.Host=="player.bilibili.com"&&video.Address.Query.Contains("p=2&t=13")&&!video.Address.Query.Contains("spm"),"B 站链接保留分 P 和时间");
         Check(!VideoLink.Parse("https://example.org/a.mp4?token=1").Bilibili,"媒体直链");
@@ -154,6 +246,7 @@ internal static class Program
         Check(!VideoLease.Active(probe),"结束播放后释放屏幕");
         Check(Host.HasKeyboardPayload(40,24)&&!Host.HasKeyboardPayload(39,24)&&!Host.HasKeyboardPayload(uint.MaxValue,24),"原始键盘包按实际复制字节数校验");
         double clock=0;var g=new Glass(()=>clock);Check(g.scans.Count==83,"物理映射，Fn 由固件处理");
+        CheckInkAndRims(g);
         var a=g.scans[30];var l=g.scans[38];Check(a.code=="KeyA"&&l.code=="KeyL"&&a.x<l.x&&a.y==l.y,"键位中心");
         var selected=new OutputChoice{Id="keyboard",Label="屏幕 3",Enabled=true};
         var main=new Output{Id="main",Label="屏幕 3",Bounds=new Rectangle(0,0,2000,1000)};
@@ -201,7 +294,7 @@ internal static class Program
                 frames[fps]=host.Frames-start;Check(frames[fps]>=3&&frames[fps]<=fps+1&&!host.Drawing,"原生限帧与停止");}
             int before=host.Frames;Pump(1100);idle=host.Frames-before;Check(idle==0,"空闲绘制");
         }
-        CheckBlackHole(g);g.Dispose();File.WriteAllText(output,Project.Json.Serialize(new{layout=g.data.keys.Length,reportablePositions=g.scans.Count,A=new[]{a.x,a.y},L=new[]{l.x,l.y},singleDirtyPixels=ra.Width*ra.Height,screenPixels=1920*720,healed=true,connectedOutputs=Displays.Connected().Select(s=>new{s.Label,s.Mirrored,s.Usable}).ToArray(),routingChecks=true,retainedInk=true,reverseHealing=true,delayedHealing=true,distinctSizes=true,reflectedAmbient=true,liveTexture=true,contactDiameter=g.data.axisSize/2,heldGrowth=true,connectedDamage=true,blackHole=true,adjacentMerge=true,fullSwallow=true,framesPerOneSecond=frames.ToDictionary(x=>x.Key.ToString(),x=>x.Value),cpuMillisecondsPer1250msProbe=cpuMs,idleFrames=idle}));
+        CheckBlackHole(g);g.Dispose();File.WriteAllText(output,Project.Json.Serialize(new{layout=g.data.keys.Length,reportablePositions=g.scans.Count,A=new[]{a.x,a.y},L=new[]{l.x,l.y},singleDirtyPixels=ra.Width*ra.Height,screenPixels=1920*720,healed=true,connectedOutputs=Displays.Connected().Select(s=>new{s.Label,s.Mirrored,s.Usable}).ToArray(),routingChecks=true,retainedInk=true,reverseHealing=true,delayedHealing=true,distinctSizes=true,reflectedAmbient=true,liveTexture=true,inkSplash=true,independentEdgeGlow=true,contactDiameter=g.data.axisSize/2,heldGrowth=true,connectedDamage=true,blackHole=true,adjacentMerge=true,fullSwallow=true,framesPerOneSecond=frames.ToDictionary(x=>x.Key.ToString(),x=>x.Value),cpuMillisecondsPer1250msProbe=cpuMs,idleFrames=idle}));
     }
     static void Pump(int ms){using(var scope=new System.Windows.Forms.ApplicationContext())using(var timer=new System.Windows.Forms.Timer{Interval=ms}){
         timer.Tick+=delegate{timer.Stop();scope.ExitThread();};timer.Start();System.Windows.Forms.Application.Run(scope);}}

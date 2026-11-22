@@ -11,12 +11,12 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Threading;
 
-[assembly: AssemblyVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.0.6.0")]
 [assembly: AssemblyProduct("hahhub")]
 
 internal sealed class Updates
 {
-    const string Channel="https://raw.githubusercontent.com/dotohua009/keybloom-lively/main/downloads/hahhub/";
+    const string Channel="https://raw.githubusercontent.com/dotohua009/Hahhub-lively/main/downloads/hahhub/";
     const string Package="hahhub-windows-x64.zip";
     const int MaxPackage=32*1024*1024;
     static readonly HttpClient client=new HttpClient{Timeout=TimeSpan.FromSeconds(60),MaxResponseContentBufferSize=MaxPackage};
@@ -48,7 +48,7 @@ internal sealed class Updates
     }
     static readonly string[] Required={"HAHHAN Studio.exe","Studio.xaml","studio.ico","cover.jpg","donation.png",
         "Microsoft.Web.WebView2.Core.dll","WebView2Loader.dll","apply-update.ps1",
-        "effects/hahhan-glass/glass-data.js","effects/hahhan-blackhole/thumbnail.jpg"};
+        "effects/hahhan-glass/glass-data.js","effects/hahhan-blackhole/thumbnail.jpg","effects/hahhub-ink/thumbnail.jpg"};
     internal void Unpack(byte[] data,string folder){
         using(var sha=SHA256.Create())
             if(data.LongLength!=manifest.bytes||!String.Equals(BitConverter.ToString(sha.ComputeHash(data)).Replace("-",""),manifest.sha256,StringComparison.OrdinalIgnoreCase))
