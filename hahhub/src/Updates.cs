@@ -11,7 +11,7 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Threading;
 
-[assembly: AssemblyVersion("1.0.6.0")]
+[assembly: AssemblyVersion("1.1.0.0")]
 [assembly: AssemblyProduct("hahhub")]
 
 internal sealed class Updates

@@ -34,6 +34,21 @@ internal sealed class Facet {public float tone{get;set;} public float enter{get;
     }
 }
 internal sealed class Pattern {public float[][] segments{get;set;} public Facet[] facets{get;set;}
+    public Pattern Turn(double angle){
+        float c=(float)Math.Cos(angle),s=(float)Math.Sin(angle);
+        Func<float[],float[]> rotate=p=>new[]{p[0]*c-p[1]*s,p[0]*s+p[1]*c};
+        var result=new Pattern{segments=new float[segments.Length][],facets=new Facet[facets.Length]};
+        for(int i=0;i<segments.Length;i++){
+            var line=(float[])segments[i].Clone();
+            for(int j=2;j<=4;j+=2){float x=line[j],y=line[j+1];line[j]=c*x-s*y;line[j+1]=s*x+c*y;}
+            result.segments[i]=line;
+        }
+        for(int i=0;i<facets.Length;i++){
+            var f=facets[i];var v=new Facet{tone=f.tone,enter=f.enter,at=f.at,points=f.points.Select(rotate).ToArray()};
+            v.Prepare();result.facets[i]=v;
+        }
+        return result;
+    }
     // Stop at the first crack tip that reaches the calibrated contact circle.
     public float Contact(float radius,int density){
         float first=float.MaxValue;
@@ -52,6 +67,8 @@ internal sealed class Pattern {public float[][] segments{get;set;} public Facet[
 internal sealed class GlassData {public float pitch{get;set;} public float axisSize{get;set;} public LayoutKey[] keys{get;set;} public Pattern[] shapes{get;set;} public Pattern[] largeShapes{get;set;}}
 internal sealed class Glass : IKeyEffect,IDisposable
 {
+    readonly EffectBudget budget=new EffectBudget();
+    public EffectBudget Budget{get{return budget;}}
     public const int DefaultRim=0xe6f1ff;
     public int rimColor=DefaultRim;
     sealed class Hit {
@@ -82,11 +99,13 @@ internal sealed class Glass : IKeyEffect,IDisposable
     public readonly Dictionary<int,LayoutKey> scans;
     readonly Dictionary<string,Hit> hits=new Dictionary<string,Hit>();
     readonly List<Joint> joints=new List<Joint>();
+    readonly Random variants;
     readonly Func<double> clock;
     public Tuning tuning=new Tuning();
     public bool Active {get{return hits.Count!=0;}}
     public Glass():this(null){}
     internal Glass(Func<double> testClock){
+        variants=new Random(testClock==null?Guid.NewGuid().GetHashCode():811);
         var watch=Stopwatch.StartNew();clock=testClock??(()=>watch.Elapsed.TotalMilliseconds);
         var text=File.ReadAllText(Path.Combine(Project.Pack(),"glass-data.js")).Trim();
         const string prefix="const GLASS = ";
@@ -138,8 +157,10 @@ internal sealed class Glass : IKeyEffect,IDisposable
             hit.baseReach=hit.Reach(now);hit.pressed=now;hit.released=-1;hit.fresh=false;
             foreach(var j in joints)if(j.from==hit||j.to==hit)j.Retarget(now);
         }else{
+            if(!Budget.Start(now))return;
+            TrimHits(Budget.Keys-1);
             var shapes=tuning.crackSize==0?data.largeShapes:data.shapes;
-            hit=new Hit{key=key,pressed=now,large=tuning.crackSize==0,shape=shapes[(key.scan*31+3)%shapes.Length],
+            hit=new Hit{key=key,pressed=now,large=tuning.crackSize==0,shape=shapes[variants.Next(shapes.Length)].Turn(variants.NextDouble()*Math.PI*2),
                 origin=new PointF(key.x*1920/(720*data.pitch),key.y/data.pitch),scale=tuning.spread/100f,density=tuning.density};
             hit.baseReach=hit.shape.Contact(Math.Min(key.stem.Width,key.stem.Height)*.5f/(720*data.pitch*hit.scale),hit.density);
             hits.Add(key.code,hit);
@@ -151,7 +172,14 @@ internal sealed class Glass : IKeyEffect,IDisposable
         double now=clock();hit.released=now;hit.mend=now+tuning.delay;hit.expires=hit.mend+tuning.heal;
         foreach(var j in joints)if(j.from==hit||j.to==hit)j.Retarget(now);
     }
+    void TrimHits(int keep){
+        while(hits.Count>keep){
+            var victim=hits.Values.OrderBy(v=>v.released<0).ThenBy(v=>v.pressed).First();
+            hits.Remove(victim.key.code);joints.RemoveAll(j=>j.from==victim||j.to==victim);
+        }
+    }
     void Expire(double now){
+        TrimHits(Budget.Keys);
         foreach(var key in hits.Where(x=>x.Value.released>=0&&now>=x.Value.expires).Select(x=>x.Key).ToArray())hits.Remove(key);
         joints.RemoveAll(j=>!hits.ContainsKey(j.from.key.code)||!hits.ContainsKey(j.to.key.code));
     }
@@ -207,7 +235,7 @@ internal sealed class Glass : IKeyEffect,IDisposable
     sealed class Ink {
         readonly List<PointF>[] points={new List<PointF>(),new List<PointF>(),new List<PointF>()};
         public void Line(int style,PointF a,PointF b){points[style].Add(a);points[style].Add(b);}
-        public void Paint(Graphics g,float opacity,float unit,Color ambient,Color rim){
+        public void Paint(Graphics g,float opacity,float unit,Color ambient,Color rim,int detail){
             var lightColor=Color.FromArgb((rim.R*3+ambient.R)/4,(rim.G*3+ambient.G)/4,(rim.B*3+ambient.B)/4);
             for(int k=0;k<points.Length;k++){
                 var pts=points[k];if(pts.Count<2)continue;
@@ -217,7 +245,9 @@ internal sealed class Glass : IKeyEffect,IDisposable
                 using(var halo=new Pen(Color.FromArgb((int)(opacity*(k==0?62:32)),rim),(darkWidth+2.3f)*unit))
                 using(var dark=new Pen(Color.FromArgb((int)(opacity*(k==2?150:215)),9,19,29),darkWidth*unit))
                 using(var light=new Pen(Color.FromArgb((int)(opacity*(k==0?244:k==1?201:150)),lightColor),lightWidth*unit)){
-                    g.DrawPath(halo,path);g.DrawPath(dark,path);var state=g.Save();
+                    if(detail==1||k==0)g.DrawPath(halo,path);
+                    if(detail<3||k<2)g.DrawPath(dark,path);
+                    var state=g.Save();
                     g.TranslateTransform(.55f*unit,-.52f*unit);g.DrawPath(light,path);g.Restore(state);
                 }
             }
@@ -234,7 +264,7 @@ internal sealed class Glass : IKeyEffect,IDisposable
             float front=hit.Reach(now);
             var origin=screen(hit.origin);float xscale=sx*hit.scale,yscale=sy*hit.scale;
             float radius=FrontRadius(hit,front,sx,sy);
-            if(wallpaper!=null)optics.Draw(g,wallpaper,sample,origin,xscale,yscale,radius,front,hit.shape,unit,dx,dy);
+            if(wallpaper!=null)optics.Draw(g,wallpaper,sample,origin,xscale,yscale,radius,front,hit.shape,unit,dx,dy,Budget.OpticalStep);
             else{
                 var faceState=g.Save();
                 using(var guard=new GraphicsPath()){
@@ -257,7 +287,7 @@ internal sealed class Glass : IKeyEffect,IDisposable
                 ink.Line((int)e[6],a,new PointF(a.X+f*(e[4]-e[2])*xscale,a.Y+f*(e[5]-e[3])*yscale));
             }
             var edgeLight=wallpaper==null?neutral:Glint(Sample(wallpaper,sample,origin.X+dx-24*unit,origin.Y+dy-32*unit));
-            ink.Paint(g,1,unit*(hit.large?1.24f:1),edgeLight,rim);
+            ink.Paint(g,1,unit*(hit.large?1.24f:1),edgeLight,rim,Budget.OpticalStep);
         }
         foreach(var j in joints){
             var ink=new Ink();float remaining=j.Reach(now);
@@ -265,7 +295,7 @@ internal sealed class Glass : IKeyEffect,IDisposable
                 var a=j.points[i-1];var b=j.points[i];float len=Dist(a,b);
                 ink.Line(1,screen(a),screen(Lerp(a,b,Math.Min(1,remaining/Math.Max(.00001f,len)))));remaining-=len;
             }
-            ink.Paint(g,1,unit,neutral,rim);
+            ink.Paint(g,1,unit,neutral,rim,Budget.OpticalStep);
         }
     }
 }

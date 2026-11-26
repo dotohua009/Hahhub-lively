@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Windows;
@@ -8,6 +8,23 @@ internal static class UiText
     static readonly string preference=Path.Combine(Project.Data,"language.txt");
     public static bool Chinese {get; private set;}
     static readonly Dictionary<string,string> ChineseText=new Dictionary<string,string>(StringComparer.Ordinal){
+        {"Block pointer entry","阻止鼠标进入键盘屏"},
+        {"Pointer entry blocked. Click to allow.","已阻止鼠标进入键盘屏，点击允许进入。"},
+        {"Pointer entry allowed. Click to block.","已允许鼠标进入键盘屏，点击阻止进入。"},
+        {"Weather","气象"},{"Materials","材质"},{"Creatures","生物"},{"Energy","能量"},{"Frost Fog","霜雾"},{"Snowdrift","风吹雪"},
+        {"Glitter Flow","流麻"},
+        {"Tap one side to tilt the liquid. Holographic flakes turn and catch the light as it flows.","哪边按得多，流麻就往哪边涌。液面映出背景，镭射亮片翻转时会闪出星芒。"},
+        {"Particle density","浓度"},{"Dissipation","消散时间"},
+        {"Mist rolls off the whole keycap as patches of frost form. Nearby taps stir the cloud.","整块键帽同时起雾，冷雾从四周向外扩散。长按凝霜，敲邻键可推开雾团。"},
+        {"Hold to bank snow behind the keycap. Sweep across keys to lift it into the wind.","长按让雪在键帽背风侧堆积，连续扫过键位可扬起积雪。"},
+        {"Voxel Fuse","方块连爆"},{"Prism","钻石切面"},{"Fuse delay","引信时间"},
+        {"Press nearby keys to plant charges and trigger a chain reaction.","依次按相邻键放置方块。冲击波会提前引爆附近的方块。"},
+        {"Hold a key to refract the background through its cap and switch facets.","按住键位，背景会随键帽、轴体与轴芯的钻石切面折射。"},
+        {"Frost Lance","冰刺"},{"Tendrils","触须"},{"Silk Colony","蛛群"},
+        {"Tap for scattered ice buds. Hold to grow clusters of long and short spikes from the keycap edge.","轻按时，键帽边缘几处先冒出冰芽。按住后，长短错落的冰刺陆续向外生长。"},
+        {"Hold to unfurl tendrils around the keycap. Press a nearby key to attract their tips.","触须沿键帽四边伸出，敲邻键会吸引触须尖端。"},
+        {"Tap to spin the first threads. Hold to weave the web and draw more spiders along the seams.","轻按抽出几缕蛛丝，长按逐圈织网，更多蜘蛛会沿键缝聚来。"},
+        {"Enhanced preset","升级版"},{"Rainbow colors","五彩渐变"},{"Body color","本体颜色"},{"Color saved.","颜色已保存。"},
         {"Cancel","取消"},
         {"Apply color","应用颜色"},
         {"Saturation and brightness","饱和度与明度"},
@@ -119,7 +136,7 @@ internal static class UiText
         {"Pull strength updated in preview.","吸入强度已在预览中生效"},
         {"Quit hahhub","退出 hahhub"},
         {"Ready to cast","等待播放"},
-        {"Rendering stops when the effect ends.","效果结束后停止绘制。"},
+        {"Detail adjusts to the frame budget. Rendering stops when idle.","按帧耗时调整细节，空闲时停止绘制。"},
         {"Resume","继续播放"},
         {"Save","保存参数"},
         {"Scan with WeChat to support HAHHAN.","使用微信扫一扫，支持 HAHHAN。"},

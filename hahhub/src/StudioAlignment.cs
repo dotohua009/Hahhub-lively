@@ -44,7 +44,9 @@ internal sealed partial class Studio {
             OpenEditor("AlignmentPanel");Get<CheckBox>("OnlyKey").IsChecked=false;Get<RadioButton>("AlignKeycap").IsChecked=true;
             Get<ComboBox>("GuideKey").SelectedIndex=guide.index;FillAlignment();Get<RadioButton>("AlignKeycap").Focus();
             bool sameMonitor=System.Windows.Forms.Screen.FromHandle(new WindowInteropHelper(window).Handle).Bounds.IntersectsWith(target.Bounds);
-            guide.Place(!sameMonitor);window.Activate();Host.NotifySettings();
+            guide.Place(!sameMonitor);
+            if(cursorBoundary!=null)cursorBoundary.Refresh();
+            window.Activate();Host.NotifySettings();
         }catch(Exception e){if(guide!=null)CloseEditor();MessageBox.Show(window,e.Message,"hahhub");}
     }
     BoxTune EditingBox(bool write){

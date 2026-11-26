@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -25,7 +25,7 @@ internal static class Project
     public static OutputChoice ReadChoice(){
         if(!File.Exists(ChoiceFile))return new OutputChoice();
         var choice=Json.Deserialize<OutputChoice>(File.ReadAllText(ChoiceFile))??new OutputChoice();
-        if(!string.IsNullOrEmpty(choice.Effect)&&choice.Effect!=Id&&choice.Effect!=BlackHole.Id&&choice.Effect!=InkSplash.Id)choice.Effect=BlackHole.Id;
+        if(!string.IsNullOrEmpty(choice.Effect)&&SkillLibrary.Find(choice.Effect)==null)choice.Effect=BlackHole.Id;
         return choice;
     }
     public static void SaveChoice(OutputChoice choice){Atomic(ChoiceFile,Json.Serialize(choice));}

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -141,18 +141,19 @@ internal sealed class Host : NativeWindow,IDisposable
         if(animation!=null){animation.Dispose();animation=null;}
         if(precise){timeEndPeriod(1);precise=false;}
     }
-    void Schedule(double now){
+    void Schedule(double now,double workMs){
         if(animation==null){
             var hwnd=Handle;var version=new IntPtr(++generation);
             animation=new System.Threading.Timer(delegate{PostMessage(hwnd,FrameMessage,version,IntPtr.Zero);},null,-1,-1);
         }
         if(!precise&&frameInterval<18)precise=timeBeginPeriod(1)==0;
         if(precise&&frameInterval>=18){timeEndPeriod(1);precise=false;}
-        drawing=true;nextFrame+=frameInterval;
-        if(nextFrame<now)nextFrame=now;
+        drawing=true;
+        // Reserve a little idle time after a late frame rather than queueing catch-up work.
+        nextFrame=Math.Max(nextFrame+frameInterval,now+effect.Budget.RestAfter(workMs));
         animation.Change(Math.Max(1,(int)Math.Ceiling(nextFrame-now)),-1);
     }
-    readonly Surface surface=new Surface(); readonly Glass glass=new Glass();readonly BlackHole hole;readonly InkSplash ink;IKeyEffect effect;
+    readonly Surface surface=new Surface(); readonly Glass glass=new Glass();readonly BlackHole hole;readonly InkSplash ink;readonly SkillLibrary library;IKeyEffect effect;
     readonly Stopwatch clock=Stopwatch.StartNew();double nextFrame,frameInterval=62.5;
     readonly System.Collections.Generic.HashSet<int> held=new System.Collections.Generic.HashSet<int>();
     const int InputCapacity=256;
@@ -160,10 +161,10 @@ internal sealed class Host : NativeWindow,IDisposable
     string activeId;bool registered,locked;Rectangle bounds;
     readonly bool probe;public int Frames{get;private set;}
     public bool Drawing{get{return drawing;}}
-    public Host(bool offscreenProbe=false){probe=offscreenProbe;hole=new BlackHole(glass.data.pitch);ink=new InkSplash(glass.data);effect=glass;CreateHandle(new CreateParams{Caption=probe?"HAHHAN Effect Probe":"HAHHAN Glass Host",Style=unchecked((int)0x80000000),ExStyle=0x08000080});
+    public Host(bool offscreenProbe=false){probe=offscreenProbe;hole=new BlackHole(glass.data.pitch);ink=new InkSplash(glass.data);library=new SkillLibrary(glass,hole,ink);effect=glass;CreateHandle(new CreateParams{Caption=probe?"HAHHAN Effect Probe":"HAHHAN Glass Host",Style=unchecked((int)0x80000000),ExStyle=0x08000080});
         if(probe){bounds=new Rectangle(-30000,-30000,1920,720);return;}
         WTSRegisterSessionNotification(Handle,0);discovery.Interval=1500;discovery.Tick+=delegate{Discover();};Discover();discovery.Start();}
-    public void ProbeStrike(int fps){if(!probe)throw new InvalidOperationException();glass.tuning.heal=1000;glass.tuning.delay=0;frameInterval=1000.0/fps;Strike(glass.scans[30]);glass.Release(glass.scans[30]);if(!surface.DesktopOnly)throw new InvalidOperationException("桌面叠加窗口位置或样式不正确");}
+    public void ProbeStrike(int fps){if(!probe)throw new InvalidOperationException();glass.tuning.heal=1000;glass.tuning.delay=0;frameInterval=1000.0/fps;effect.Budget.SetRate(fps);Strike(glass.scans[30]);glass.Release(glass.scans[30]);if(!surface.DesktopOnly)throw new InvalidOperationException("桌面叠加窗口位置或样式不正确");}
     void Strike(LayoutKey loc){effect.Strike(loc);if(!drawing){nextFrame=clock.Elapsed.TotalMilliseconds;Draw();}}
     void ReleaseKey(LayoutKey key){effect.Release(key);if(!drawing&&effect.Active){nextFrame=clock.Elapsed.TotalMilliseconds;Draw();}}
     void Enable(bool enable){if(enable==registered)return;var d=new Device{page=1,usage=6,flags=enable?0x100u:1u,hwnd=enable?Handle:IntPtr.Zero};
@@ -186,19 +187,20 @@ internal sealed class Host : NativeWindow,IDisposable
             if(activeId!=target.Id||bounds!=target.Bounds||surface.VideoPlayer!=player){Detach();activeId=target.Id;bounds=target.Bounds;surface.VideoPlayer=player;}
             if(glass.geometry.Sync(target.Id))Idle();
             surface.SampleWallpaper=player==IntPtr.Zero&&Project.WallpaperIntegration;
-            IKeyEffect next=choice.Effect==InkSplash.Id?(IKeyEffect)ink:choice.Effect==BlackHole.Id?(IKeyEffect)hole:glass;
+            library.Configure(SkillOptions.Read());
+            IKeyEffect next=library.Select(choice.Effect);
             if(next!=effect){StopFrames();effect.Clear();surface.Hide();effect=next;}
             if(effect==ink)ink.tuning=InkTuning.Read();
             if(effect==hole){hole.power=Project.HolePower();hole.rimColor=Project.RimColor(true);}
             if(effect==glass){glass.tuning=Project.ReadTuning();glass.rimColor=Project.RimColor(false);}
-            frameInterval=1000.0/Project.Fps();Enable(true);
+            int rate=Project.Fps();effect.Budget.SetRate(rate);frameInterval=1000.0/rate;Enable(true);
             if(!registered)Idle();surface.Place();
         }catch(Exception e){Detach();Trace.TraceWarning(e.Message);}
     }
-    void Draw(){try{if(!probe&&(!registered||activeId==null)){Detach();return;}var area=effect.Bounds(bounds.Width,bounds.Height);
-        surface.Paint(effect,bounds,area);if(!area.IsEmpty)Frames++;
+    void Draw(){try{if(!probe&&(!registered||activeId==null)){Detach();return;}double started=clock.Elapsed.TotalMilliseconds;var area=effect.Bounds(bounds.Width,bounds.Height);
+        surface.Paint(effect,bounds,area);if(!area.IsEmpty)effect.Budget.Observe(clock.Elapsed.TotalMilliseconds-started);if(!area.IsEmpty)Frames++;
         if(!effect.Active||(effect==hole&&hole.Parked)){StopFrames();return;}
-        Schedule(clock.Elapsed.TotalMilliseconds);}
+        double ended=clock.Elapsed.TotalMilliseconds;Schedule(ended,ended-started);}
         catch(Exception e){Detach();Trace.TraceWarning(e.Message);}}
     internal static bool HasKeyboardPayload(uint copied,uint headerSize){
         return copied>=headerSize+Marshal.SizeOf(typeof(Key))&&copied<=InputCapacity;
@@ -222,5 +224,5 @@ internal sealed class Host : NativeWindow,IDisposable
         }
         base.WndProc(ref m);
     }
-    public void Dispose(){discovery.Dispose();Detach();surface.Dispose();glass.Dispose();hole.Dispose();WTSUnRegisterSessionNotification(Handle);DestroyHandle();Marshal.FreeHGlobal(input);}
+    public void Dispose(){discovery.Dispose();Detach();surface.Dispose();library.Dispose();glass.Dispose();hole.Dispose();WTSUnRegisterSessionNotification(Handle);DestroyHandle();Marshal.FreeHGlobal(input);}
 }

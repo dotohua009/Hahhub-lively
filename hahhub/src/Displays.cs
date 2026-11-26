@@ -21,7 +21,9 @@ internal sealed class Output
 {
     public string Id, Label;
     public Rectangle Bounds;
-    public bool Mirrored;
+    public bool Mirrored, Primary;
+    public string Source;
+    public IntPtr Monitor;
     public bool Usable {get{return !Mirrored&&!Bounds.IsEmpty&&!string.IsNullOrEmpty(Id);}}
     public string DisplayName {get{return UiText.Display(Label);}}
     public override string ToString(){return DisplayName+(Mirrored?UiText.T(" · Mirrored"):Bounds.IsEmpty?UiText.T(" · Offline"):"");}
@@ -102,13 +104,23 @@ internal static class Displays
     delegate bool VisitMonitor(IntPtr monitor,IntPtr dc,IntPtr rect,IntPtr data);
     [DllImport("user32.dll")] static extern bool EnumDisplayMonitors(IntPtr dc,IntPtr clip,VisitMonitor callback,IntPtr data);
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern bool GetMonitorInfo(IntPtr monitor,ref MonitorInfo info);
-    static Dictionary<string,Rectangle> DesktopBounds(){
-        var result=new Dictionary<string,Rectangle>(StringComparer.OrdinalIgnoreCase);
+    static Dictionary<string,Tuple<IntPtr,MonitorInfo>> DesktopBounds(){
+        var result=new Dictionary<string,Tuple<IntPtr,MonitorInfo>>(StringComparer.OrdinalIgnoreCase);
         EnumDisplayMonitors(IntPtr.Zero,IntPtr.Zero,delegate(IntPtr mon,IntPtr dc,IntPtr rect,IntPtr data){
             var info=new MonitorInfo{size=Marshal.SizeOf(typeof(MonitorInfo))};
-            if(GetMonitorInfo(mon,ref info)){var r=info.bounds;result[info.name]=Rectangle.FromLTRB(r.left,r.top,r.right,r.bottom);}
+            if(GetMonitorInfo(mon,ref info))result[info.name]=Tuple.Create(mon,info);
             return true;
         },IntPtr.Zero);return result;
+    }
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromPoint(Point point,uint flags);
+    internal static bool StillAt(Output screen,Point point){
+        if(!screen.Bounds.Contains(point))return false;
+        var mon=MonitorFromPoint(point,0);
+        var info=new MonitorInfo{size=Marshal.SizeOf(typeof(MonitorInfo))};
+        if(mon==IntPtr.Zero||mon!=screen.Monitor||!GetMonitorInfo(mon,ref info))return false;
+        var r=info.bounds;
+        return screen.Primary==((info.flags&1)!=0)&&String.Equals(screen.Source,info.name,StringComparison.OrdinalIgnoreCase)
+            &&screen.Bounds==Rectangle.FromLTRB(r.left,r.top,r.right,r.bottom);
     }
     public static List<Output> Connected(){
         var list=new List<Output>();
@@ -122,14 +134,16 @@ internal static class Displays
                 var src=group.First().source;
                 var source=new SourceName{head=new Header{type=1,size=(uint)Marshal.SizeOf(typeof(SourceName)),adapter=src.adapter,id=src.id}};
                 if(ReadSource(ref source)!=0)continue;
-                Rectangle bounds;if(!desktops.TryGetValue(source.name,out bounds))continue;
-                bool cloned=group.Count()>1||desktops.Values.Count(r=>r==bounds)>1;
+                Tuple<IntPtr,MonitorInfo> desktop;if(!desktops.TryGetValue(source.name,out desktop))continue;
+                var monitor=desktop.Item2;
+                var rect=monitor.bounds;var bounds=Rectangle.FromLTRB(rect.left,rect.top,rect.right,rect.bottom);
+                bool cloned=group.Count()>1||desktops.Values.Count(m=>m.Item2.bounds.Equals(rect))>1;
                 foreach(var p in group){
                     var target=new TargetName{head=new Header{type=2,size=(uint)Marshal.SizeOf(typeof(TargetName)),adapter=p.target.adapter,id=p.target.id}};
                     if(ReadTarget(ref target)!=0||string.IsNullOrWhiteSpace(target.path))continue;
                     string number=source.name.Replace(@"\\.\DISPLAY",""),label="Display "+number;
                     if(!string.IsNullOrWhiteSpace(target.friendly))label+=" · "+target.friendly;
-                    list.Add(new Output{Id=target.path,Label=label,Bounds=bounds,Mirrored=cloned});
+                    list.Add(new Output{Id=target.path,Label=label,Bounds=bounds,Mirrored=cloned,Primary=(monitor.flags&1)!=0,Source=source.name,Monitor=desktop.Item1});
                 }
             }
             break;

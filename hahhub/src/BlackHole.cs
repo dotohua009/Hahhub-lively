@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading.Tasks;
 
 internal interface IKeyEffect {
+    EffectBudget Budget{get;}
     bool Active {get;}
     void Strike(LayoutKey key);
     void Release(LayoutKey key);
@@ -18,6 +19,8 @@ internal interface IKeyEffect {
 }
 
 internal sealed class BlackHole : IKeyEffect,IDisposable {
+    readonly EffectBudget budget=new EffectBudget();
+    public EffectBudget Budget{get{return budget;}}
     public const string Id="hahhan-blackhole";
     public const int DefaultRim=0xe4e7f2;
     public int rimColor=DefaultRim;
@@ -38,14 +41,14 @@ internal sealed class BlackHole : IKeyEffect,IDisposable {
     }
     sealed class Well {
         public LayoutKey key;public double birth,pressed,released=-1;public float baseOpen=.16f,baseGrowth;
-        public readonly float[] edge=new float[Angles];public int phase,spin;
+        public readonly float[] edge=new float[Angles];public int phase,spin;public float oval,wobble,twist;
         public void UpdateEdge(double now){
             double age=now-birth;int drift=(int)(age*.115),tilt=phase+(int)(53*Sin((int)(age*.13)+phase));
-            float major=.42f+.016f*Sin(drift+phase),minor=major*(.84f+.09f*Sin((int)(age*.15)-phase));
+            float major=.42f+.016f*Sin(drift+phase),minor=major*(oval+.065f*Sin((int)(age*.15)-phase));
             for(int i=0;i<Angles;i++){
                 float c=Sin(i-tilt+Angles/4),s=Sin(i-tilt);
                 float ellipse=major*minor/(float)Math.Sqrt(minor*minor*c*c+major*major*s*s);
-                edge[i]=ellipse+.009f*Sin(3*i+phase+drift)+.005f*Sin(4*i-phase-2*drift);
+                edge[i]=ellipse+wobble*Sin(3*i+phase+drift)+.005f*Sin(4*i-phase-2*drift);
             }
         }
         public float Growth(double now){
@@ -65,11 +68,12 @@ internal sealed class BlackHole : IKeyEffect,IDisposable {
         }
     }
     readonly Dictionary<string,Well> wells=new Dictionary<string,Well>();
-    readonly Func<double> clock;readonly float pitch;
+    readonly Func<double> clock;readonly float pitch;readonly Random shapeSeed;
     Bitmap tile;
     public int power=80;
+    public bool enhanced;
     public BlackHole(float keyPitch,Func<double> testClock=null){
-        var timer=Stopwatch.StartNew();clock=testClock??(()=>timer.Elapsed.TotalMilliseconds);pitch=keyPitch;
+        var timer=Stopwatch.StartNew();clock=testClock??(()=>timer.Elapsed.TotalMilliseconds);pitch=keyPitch;shapeSeed=new Random(testClock==null?Guid.NewGuid().GetHashCode():41);
     }
     static float Clamp(float x){return Math.Max(0,Math.Min(1,x));}
     static float Sin(int i){return sine[i&(Angles-1)];}
@@ -80,9 +84,17 @@ internal sealed class BlackHole : IKeyEffect,IDisposable {
             if(hole.released<0)return;
             hole.baseGrowth=hole.Growth(now);hole.baseOpen=hole.Open(now);hole.pressed=now;hole.released=-1;return;
         }
-        int seed=key.scan!=0?key.scan:(int)(key.x*937);
-        hole=new Well{key=key,birth=now,pressed=now,phase=seed*137,spin=seed%2==0?1:-1};
+        if(!Budget.Start(now))return;
+        TrimWells(Budget.Keys-1);
+        int seed=shapeSeed.Next(1,8191);
+        hole=new Well{key=key,birth=now,pressed=now,phase=seed%Angles,spin=seed%2==0?1:-1,oval=.73f+(float)shapeSeed.NextDouble()*.24f,wobble=.007f+(float)shapeSeed.NextDouble()*.024f,twist=.74f+(float)shapeSeed.NextDouble()*.65f};
         wells[key.code]=hole;
+    }
+    void TrimWells(int keep){
+        while(wells.Count>keep){
+            var victim=wells.Values.OrderBy(v=>v.released<0).ThenBy(v=>v.pressed).First();
+            wells.Remove(victim.key.code);
+        }
     }
     public void Release(LayoutKey key){Well v;if(wells.TryGetValue(key.code,out v)&&v.released<0)v.released=clock();}
     public void Clear(){wells.Clear();if(tile!=null){tile.Dispose();tile=null;}}
@@ -137,7 +149,7 @@ internal sealed class BlackHole : IKeyEffect,IDisposable {
         }
     }
     public Rectangle Bounds(int w,int h){
-        double now=clock();foreach(var k in wells.Where(p=>p.Value.Open(now)<=0).Select(p=>p.Key).ToArray())wells.Remove(k);
+        double now=clock();TrimWells(Budget.Keys);foreach(var k in wells.Where(p=>p.Value.Open(now)<=0).Select(p=>p.Key).ToArray())wells.Remove(k);
         Plan(w,h,now);return Area(w,h);
     }
     Rectangle Area(int w,int h){
@@ -187,7 +199,7 @@ internal sealed class BlackHole : IKeyEffect,IDisposable {
                 if(src!=null){
                     // Reverse-map the outer texture into a tightening spiral. Crossfade two streams at their wraps.
                     float bend=pull*(.36f+.64f*gain)*(.91f+.09f*Sin(cell.angle*3+hole.phase));
-                    int turn=(int)(bend*(.18f+.68f*inward)*hole.spin*Angles);
+                    int turn=(int)(hole.twist*bend*(.18f+.68f*inward)*hole.spin*Angles);
                     float radial=(1-r)*bend;
                     uint a=Bent(ref source,box,cell.angle+(int)(turn*(.40f+phase)),r+radial*(.22f+.78f*phase));
                     uint b=Bent(ref source,box,cell.angle+(int)(turn*(.40f+other)),r+radial*(.22f+.78f*other));
@@ -204,6 +216,16 @@ internal sealed class BlackHole : IKeyEffect,IDisposable {
                 float halo=1-Clamp(Math.Abs(d-.018f)/.088f);
                 color=Blend(color,(uint)rimColor,(int)(halo*halo*arc*open*76));
                 color=Blend(color,Blend((uint)rimColor,0xffffff,42),(int)(lip*lip*arc*open*225));
+                if(enhanced){
+                    // A tilted accretion band crosses the near rim and arcs above the far rim.
+                    float x=cell.u,y=cell.v+x*.25f,orb=open*.64f;
+                    float near=Clamp(1-Math.Abs(y-.045f*open)/(.024f+.044f*open))*Clamp((orb-Math.Abs(x))*16)*Clamp((d+.035f)*20);
+                    float curve=Clamp(1-Math.Abs(r-core-.055f)/.056f)*Clamp((-y+.07f)*7);
+                    float streak=.48f+.52f*Sin(cell.angle*5+(int)(d*2400)-wave*2);
+                    float glow=Clamp((near+curve*.89f)*(.64f+.36f*streak))*open;
+                    color=Blend(color,Blend(0xffb369,(uint)rimColor,88),(int)(glow*243));
+                    if(src==null)alpha=Math.Max(alpha,(int)(glow*opacity*235));
+                }
                 color=Blend(color,0x02030a,(int)(Clamp(-d*46)*256));
                 uint pixel=Blend(0,color,alpha==255?256:alpha);
                 *target=((uint)alpha<<24)|pixel;

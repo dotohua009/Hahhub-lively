@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -8,7 +8,10 @@ using System.Linq;
 using System.Runtime.InteropServices;
 
 internal sealed class InkSplash : IKeyEffect {
+    readonly EffectBudget budget=new EffectBudget();
+    public EffectBudget Budget{get{return budget;}}
     public const string Id="hahhub-ink";
+    public bool enhanced;
     const int Lifetime=1520;
     const double Tau=2*Math.PI;
     static readonly Color[] colors={Color.FromArgb(245,35,85),Color.FromArgb(255,127,18),Color.FromArgb(249,213,20),
@@ -26,7 +29,7 @@ internal sealed class InkSplash : IKeyEffect {
         public void Dispose(){dib.Dispose();}
     }
     sealed class Splash {
-        public LayoutKey key;public Color color;public double birth,end,fade;public RectangleF bounds;
+        public bool enhanced;public LayoutKey key;public Color color;public double birth,end,fade;public RectangleF bounds;
         public readonly GraphicsPath body=new GraphicsPath();
         public PathGradientBrush wet;public Drop[] drops;public uint[] palette;public Sprite sprite,bodyStamp;public bool settled;
         public void Dispose(){wet.Dispose();body.Dispose();if(sprite!=null)sprite.Dispose();if(bodyStamp!=null)bodyStamp.Dispose();}
@@ -59,6 +62,7 @@ internal sealed class InkSplash : IKeyEffect {
         return order[next++];
     }
     Color NextColor(){
+        if(enhanced){var neon=new[]{0xf04aa1,0x804bd4,0x2dcbcc,0xfd9976};return Color.FromArgb(unchecked((int)0xff000000)|neon[random.Next(neon.Length)]);}
         hue=(hue+Range(.19f,.79f))%1;float v=hue*colors.Length;int slot=(int)v;
         var a=colors[slot];var b=colors[(slot+1)%colors.Length];float t=v-slot;
         return Color.FromArgb((int)(a.R+(b.R-a.R)*t),(int)(a.G+(b.G-a.G)*t),(int)(a.B+(b.B-a.B)*t));
@@ -69,10 +73,15 @@ internal sealed class InkSplash : IKeyEffect {
     public bool Active{get{return splashes.Count!=0||stains.Count!=0;}}
     public void Strike(LayoutKey key){
         Stain st;if(key==null||(stains.TryGetValue(key,out st)&&st.released<0))return;
-        var color=NextColor();double now=clock();Dye(key,color,now);
+        double now=clock();if(!Budget.Start(now))return;
+        if(!stains.ContainsKey(key))TrimStains(Budget.Keys-1);
+        var color=NextColor();Dye(key,color,now);
         Emit(key,color,now,false);
     }
     void Emit(LayoutKey key,Color color,double now,bool continuous){
+        int maxLayers=Budget.Count(10);
+        if(continuous&&splashes.Count>=maxLayers)return;
+        TrimSplashes(maxLayers-1);
         var style=NextImpact();bool flick=style==Impact.Flick,mist=style==Impact.Mist,pool=style==Impact.Pool;
         double direction=Unit()*Tau;float power=Range(.85f,1.18f);
         float core=pool?Range(.34f,.46f):mist?Range(.17f,.26f):Range(.25f,.36f);
@@ -86,7 +95,7 @@ internal sealed class InkSplash : IKeyEffect {
         float halfW=key.cap.Width/(3840*pitchX),halfH=key.cap.Height/(1440*pitchY);
         float ox=((key.cap.Left+key.cap.Width*.5f)/1920-key.x)/pitchX,oy=((key.cap.Top+key.cap.Height*.5f)/720-key.y)/pitchY;
         if(continuous)core*=.52f;
-        var s=new Splash{key=key,color=color,birth=now,end=now+Lifetime,fade=now+560};
+        var s=new Splash{key=key,color=color,enhanced=enhanced,birth=now,end=now+Lifetime,fade=now+560};
         var contour=new PointF[continuous?36:90];double lobe=Unit()*Tau;
         for(int i=0;i<contour.Length;i++){
             double a=direction+i*Tau/contour.Length;
@@ -109,6 +118,7 @@ internal sealed class InkSplash : IKeyEffect {
             flights[i]=new Flight{delay=Range(0,58),duration=Range(245,470),bend=Range(-.15f,.15f),lift=Range(.02f,.18f)};
         int count=mist?random.Next(205,306):flick?random.Next(145,228):pool?random.Next(108,172):random.Next(165,260);
         if(continuous)count=random.Next(26,53);
+        count=Budget.Count(count);
         s.drops=new Drop[count];s.bounds=s.body.GetBounds();s.palette=Palette(s.color);
         float escapeChance=Range(.10f,.18f);
         for(int i=0;i<count;i++){
@@ -192,6 +202,15 @@ internal sealed class InkSplash : IKeyEffect {
             s.fade=Math.Min(s.fade,s.end-(s.end-now)*.65);latest=false;
         }
     }
+    void TrimStains(int keep){
+        while(stains.Count>keep){
+            var old=stains.Values.OrderBy(v=>v.released<0).ThenBy(v=>v.birth).First();
+            old.sprite.Dispose();stains.Remove(old.key);
+        }
+    }
+    void TrimSplashes(int keep){
+        while(splashes.Count>keep){splashes[0].Dispose();splashes.RemoveAt(0);}
+    }
     public void Clear(){
         foreach(var s in splashes)s.Dispose();splashes.Clear();
         foreach(var st in stains.Values)st.sprite.Dispose();stains.Clear();
@@ -203,6 +222,7 @@ internal sealed class InkSplash : IKeyEffect {
             (int)Math.Ceiling(w*key.x+b.Right*sx)+2,(int)Math.Ceiling(h*key.y+b.Bottom*sy)+2);
     }
     public Rectangle Bounds(int w,int h){
+        TrimStains(Budget.Keys);TrimSplashes(Budget.Count(10));
         double now=clock();var area=Rectangle.Empty;
         foreach(var st in stains.Values)if(st.released<0&&now>=st.next){
             Emit(st.key,st.pigment,now,true);st.next=now+SprayPeriod;
@@ -234,6 +254,19 @@ internal sealed class InkSplash : IKeyEffect {
                 using(var brush=new SolidBrush(Color.FromArgb(135,s.color)))
                 using(var pen=new Pen(Color.FromArgb(102,s.color),.016f)){
                     g.FillPath(brush,s.body);g.FillPath(s.wet,s.body);g.DrawPath(pen,s.body);
+                    if(s.enhanced){
+                        // Broken, offset brush strokes stay attached to the baked outline.
+                        var contour=s.body.PathPoints;
+                        int take=Math.Min(64,contour.Length-2);
+                        using(var shadow=new Pen(Color.FromArgb(215,43,21,62),.023f))
+                        using(var glint=new Pen(Color.FromArgb(233,255,189,226),.014f)){
+                            for(int j=1;j<take;j+=6){
+                                var a=contour[j];var b=contour[j+1];var c=contour[j+2];
+                                g.DrawLine(shadow,a,b);
+                                a.X-=.009f;a.Y-=.013f;c.X-=.005f;c.Y-=.007f;g.DrawLine(glint,a,c);
+                            }
+                        }
+                    }
                 }
                 g.Flush(FlushIntention.Sync);
             }

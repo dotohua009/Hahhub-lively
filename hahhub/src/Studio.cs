@@ -21,11 +21,15 @@ internal sealed partial class Studio
 {
     public readonly Window window;
     readonly Glass glass=new Glass();
+    readonly SkillLibrary library;SkillOptions options;
     readonly BlackHole hole;readonly InkSplash ink;string selectedId=Project.Id;IKeyEffect effect;bool selecting,holeDirty,inkDirty;
     readonly DispatcherTimer preview=new DispatcherTimer(),status=new DispatcherTimer();
     int fps;
     bool dirty;
-    Bitmap previewCover;
+    Bitmap previewCover,boardBackdrop,previewPixels;
+    WriteableBitmap previewImage;
+    readonly Stopwatch previewClock=Stopwatch.StartNew();
+    Rectangle boardWorld;
     string pendingId;
     string videoTargetId;
     VideoWindow video;
@@ -35,6 +39,8 @@ internal sealed partial class Studio
     Updates available;
     DateTime lastCheck;
     string updateMessage="Check for a new version.";
+    CursorBoundary cursorBoundary;
+    string boundaryId;
     readonly Button targetButton;
     readonly Button applyButton;
     [DllImport("user32.dll")] static extern uint MapVirtualKey(uint key,uint type);
@@ -42,17 +48,19 @@ internal sealed partial class Studio
     static BitmapImage ImageFile(string path){var b=new BitmapImage();b.BeginInit();b.CacheOption=BitmapCacheOption.OnLoad;b.UriSource=new Uri(path);b.EndInit();b.Freeze();return b;}
     void Note(string msg){Get<TextBlock>("Feedback").Text=msg;}
     public Studio(){
-        hole=new BlackHole(glass.data.pitch);ink=new InkSplash(glass.data);effect=glass;
+        hole=new BlackHole(glass.data.pitch);ink=new InkSplash(glass.data);library=new SkillLibrary(glass,hole,ink);options=SkillOptions.Read();library.Configure(options);effect=glass;
         using(var f=File.OpenRead(Path.Combine(Project.Base,"Studio.xaml")))window=(Window)XamlReader.Load(f);
         UiText.Load();
         UiText.Apply(window);
         window.ShowInTaskbar=false;
         window.Icon=BitmapFrame.Create(new Uri(Path.Combine(Project.Base,"studio.ico")));
         new StudioFrame(window);
-        Get<ImageView>("Cover").Source=ImageFile(Path.Combine(Project.Base,"cover.jpg"));
+        SetBoardBackdrop();
         Get<ImageView>("Tile").Source=ImageFile(Path.Combine(Project.Pack(),"thumbnail.jpg"));
         Get<ImageView>("HoleImage").Source=ImageFile(Path.Combine(Project.Base,"effects",BlackHole.Id,"thumbnail.jpg"));
         Get<ImageView>("InkImage").Source=ImageFile(Path.Combine(Project.Base,"effects",InkSplash.Id,"thumbnail.jpg"));
+        foreach(var item in new[]{new[]{"FrostImage","frost"},new[]{"TendrilImage","tendrils"},new[]{"SilkImage","silk"},new[]{"FuseImage","fuse"},new[]{"PrismImage","prism"},new[]{"FogImage","fog"},new[]{"SnowImage","snow"},new[]{"GlitterImage","glitter"}})
+            Get<ImageView>(item[0]).Source=ImageFile(Path.Combine(Project.Base,"effects","hahhub-materials","thumbnails",item[1]+".jpg"));
         glass.rimColor=Project.RimColor(false);hole.rimColor=Project.RimColor(true);
         InitPalette();InitAlignment();
         ink.tuning=InkTuning.Read();Get<Slider>("Spray").Value=ink.tuning.spread;Get<Slider>("Dry").Value=ink.tuning.recovery;
@@ -71,20 +79,55 @@ internal sealed partial class Studio
         hole.power=Project.HolePower();Get<Slider>("Pull").Value=hole.power;
         Get<TextBlock>("PullNum").Text=hole.power+"%";
         Get<Slider>("Pull").ValueChanged+=delegate{hole.power=(int)Get<Slider>("Pull").Value;Get<TextBlock>("PullNum").Text=hole.power+"%";holeDirty=true;Note(UiText.T("Pull strength updated in preview."));};
+        var fuseDelay=Get<Slider>("FuseDuration");
+        fuseDelay.Value=options.fuseMs;
+        UpdateFuseLabel();
+        fuseDelay.ValueChanged+=delegate{
+            library.Fuse.fuseMs=(int)Math.Round(fuseDelay.Value);
+            UpdateFuseLabel();
+            if(!fuseDelay.IsMouseCaptureWithin)SaveFuseDelay();
+        };
+        fuseDelay.AddHandler(Mouse.LostMouseCaptureEvent,new MouseEventHandler(delegate{SaveFuseDelay();}),true);
+        InitCategories();InitWeather();
         ShowEffect(Project.ReadChoice().Effect);
-        foreach(var name in new[]{"HoleTile","GlassTile","InkTile"})Get<RadioButton>(name).Checked+=delegate{
+        foreach(var entry in SkillLibrary.Entries)Get<RadioButton>(entry.tile).Checked+=delegate{
             if(selecting)return;
-            var id=name=="InkTile"?InkSplash.Id:name=="HoleTile"?BlackHole.Id:Project.Id;
+            var id=entry.id;
             try{var choice=Project.ReadChoice();choice.Effect=id;Project.SaveChoice(choice);Host.NotifySettings();ShowEffect(id);
                 if(!Get<Grid>("EffectView").IsVisible)ShowPage("EffectView");
                 if(choice.Enabled)Program.EnsureHost();
                 Note(choice.Enabled?UiText.T("Effect applied to the selected display."):UiText.T("Effect ready to preview."));}
             catch(Exception e){ShowEffect(selectedId);Note(e.Message);}
         };
+        foreach(var name in new[]{"Enhanced","Spectrum"}){
+            var box=Get<CheckBox>(name);
+            box.Click+=delegate{
+                try{
+                    var next=SkillOptions.Read();
+                    if(name=="Spectrum")next.rainbow=box.IsChecked==true;
+                    else if(effect==hole)next.holeEnhanced=box.IsChecked==true;
+                    else if(effect==ink)next.inkEnhanced=box.IsChecked==true;
+                    next.Save();options=next;library.Configure(next);Host.NotifySettings();
+                    effect.Clear();var key=glass.scans[33];TestHit(key);ReleasePreview(key);Note(UiText.T("Settings saved."));
+                }catch(Exception error){ShowEffect(selectedId);Note(error.Message);}
+            };
+        }
         fps=Project.Fps();Get<RadioButton>(fps==16?"Low":fps==24?"Mid":fps==60?"Ultra":"High").IsChecked=true;
         foreach(var n in new[]{"Low","Mid","High","Ultra"}){var r=Get<RadioButton>(n);r.Checked+=delegate{try{int cap=r.Name=="Low"?16:r.Name=="Mid"?24:r.Name=="Ultra"?60:30;Project.Atomic(Project.ProfilePath,cap.ToString());fps=cap;Host.NotifySettings();UpdateRate();Note(UiText.T("Frame rate saved."));}catch(Exception e){Note(e.Message);}};}
         targetButton=Get<Button>("Target");applyButton=Get<Button>("Apply");
         targetButton.Click+=delegate{ChooseOutput(targetButton,false);};
+        Get<System.Windows.Controls.Primitives.ToggleButton>("CursorBoundary").Click+=delegate{
+            try{
+                var saved=Project.ReadChoice();var screens=Choices(saved);
+                var pick=screens.FirstOrDefault(d=>Same(d.Id,pendingId??saved.Id));
+                if(pick!=null&&Same(pick.Id,boundaryId)&&KeyboardScreen.Eligible(pick,screens)){
+                    bool block=Get<System.Windows.Controls.Primitives.ToggleButton>("CursorBoundary").IsChecked==true;
+                    KeyboardScreen.SetBlocked(pick.Id,block);
+                    if(cursorBoundary!=null)cursorBoundary.Refresh();
+                }
+            }catch(Exception error){Note(error.Message);}
+            Refresh();
+        };
         var videoTarget=Get<Button>("VideoTarget");
         videoTarget.Click+=delegate{ChooseOutput(videoTarget,true);};
         var videoTile=Get<RadioButton>("VideoTile");
@@ -120,7 +163,7 @@ internal sealed partial class Studio
             try{UiText.Save(useChinese);}
             catch(Exception error){(UiText.Chinese?chinese:english).IsChecked=true;MessageBox.Show(window,error.Message,window.Title);return;}
             UiText.Apply(window);
-            Get<TextBlock>("EffectTitle").Text=UiText.T(EffectName);
+            UpdateSkillLabels();
             Get<Button>("BackToEffect").Content=UiText.T(videoTile.IsChecked==true?"Back to video":"Back to effects");
             Get<Button>("PauseVideo").Content=UiText.T(video!=null&&video.Paused?"Resume":"Pause");
             var feedback=Get<TextBlock>("Feedback");feedback.Text=UiText.Retranslate(feedback.Text);
@@ -137,7 +180,7 @@ internal sealed partial class Studio
         };
         support.Checked+=saveSupport;support.Unchecked+=saveSupport;
         Get<Button>("BackToEffect").Click+=delegate{ShowPage(videoTile.IsChecked==true?"VideoView":"EffectView");};
-        foreach(var tile in new[]{"GlassTile","HoleTile","InkTile"})Get<RadioButton>(tile).Click+=delegate{
+        foreach(var entry in SkillLibrary.Entries)Get<RadioButton>(entry.tile).Click+=delegate{
             if(!Get<Grid>("EffectView").IsVisible)ShowPage("EffectView");
         };
         window.PreviewKeyDown+=delegate(object sender,KeyEventArgs e){
@@ -148,15 +191,16 @@ internal sealed partial class Studio
         var hero=Get<Grid>("Hero");LayoutKey mouseKey=null;
         hero.SizeChanged+=delegate{hero.Clip=new RectangleGeometry(new Rect(hero.RenderSize),11,11);};
         hero.MouseLeftButtonDown+=delegate(object sender,MouseButtonEventArgs e){
-            hero.Focus();hero.CaptureMouse();var pt=e.GetPosition(hero);
-            mouseKey=glass.data.keys.OrderBy(k=>Math.Pow(k.x*hero.ActualWidth-pt.X,2)+Math.Pow(k.y*hero.ActualHeight-pt.Y,2)).First();TestHit(mouseKey);};
+            hero.Focus();var pt=e.GetPosition(Get<Canvas>("BoardPlane"));
+            mouseKey=glass.data.keys.FirstOrDefault(k=>k.cap.Contains((float)pt.X+boardWorld.X,(float)pt.Y+boardWorld.Y));
+            if(mouseKey!=null){hero.CaptureMouse();TestHit(mouseKey);}};
         hero.MouseLeftButtonUp+=delegate{if(mouseKey!=null){ReleasePreview(mouseKey);mouseKey=null;}hero.ReleaseMouseCapture();};
         hero.LostMouseCapture+=delegate{if(mouseKey!=null){ReleasePreview(mouseKey);mouseKey=null;}};
         hero.KeyDown+=delegate(object sender,KeyEventArgs e){if(e.IsRepeat||e.Key==Key.Tab)return;var k=PreviewKey(e);if(k!=null){TestHit(k);e.Handled=true;}};
         hero.KeyUp+=delegate(object sender,KeyEventArgs e){var k=PreviewKey(e);if(k!=null){ReleasePreview(k);e.Handled=true;}};
         hero.LostKeyboardFocus+=delegate{effect.Clear();};
         preview.Tick+=delegate{PreviewFrame();};status.Interval=TimeSpan.FromSeconds(2);status.Tick+=delegate{Refresh();};
-        window.Loaded+=delegate{Refresh();status.Start();};window.Closed+=delegate{preview.Stop();status.Stop();if(video!=null)video.Close();glass.Dispose();hole.Dispose();ink.Clear();if(previewCover!=null)previewCover.Dispose();};
+        window.Loaded+=delegate{Refresh();status.Start();};window.Closed+=delegate{preview.Stop();status.Stop();if(video!=null)video.Close();library.Dispose();glass.Dispose();hole.Dispose();ink.Clear();if(previewCover!=null)previewCover.Dispose();if(boardBackdrop!=null)boardBackdrop.Dispose();if(previewPixels!=null)previewPixels.Dispose();};
         UpdateTuning();UpdateRate();Note(UiText.T("Effects appear on the selected display."));
     }
     public void OpenPanel(){
@@ -165,6 +209,7 @@ internal sealed partial class Studio
         window.Activate();
     }
     public int Run(Application app,bool background,string updated){
+        using(cursorBoundary=new CursorBoundary())
         using(var icon=new Icon(Path.Combine(Project.Base,"studio.ico")))
         using(var menu=new Forms.ContextMenu())
         using(var tray=new Forms.NotifyIcon{Text=window.Title,Icon=icon,ContextMenu=menu}){
@@ -255,58 +300,135 @@ internal sealed partial class Studio
             if(session.IsDisposed&&video==session){video=null;Get<Button>("StopVideo").IsEnabled=false;feedback.Text=session.Result;}
         }catch(Exception e){feedback.Text=e.Message;}
     }
-    string EffectName{get{return effect==ink?"Ink Splash":effect==hole?"Black Hole":"Fracture";}}
+    void InitCategories(){
+        var tabs=Get<Panel>("CategoryTabs");
+        foreach(RadioButton tab in tabs.Children){
+            tab.Checked+=delegate{
+                foreach(RadioButton item in tabs.Children)
+                    Get<StackPanel>((string)item.Tag).Visibility=item==tab?Visibility.Visible:Visibility.Collapsed;
+            };
+        }
+    }
+    string EffectName{get{return SkillLibrary.Find(selectedId).title;}}
+    bool BodyColor{get{return selectedId==Tendrils.Id||selectedId==SilkColony.Id;}}
+    int SelectedColor{get{return selectedId==Tendrils.Id?options.tendrilColor:selectedId==SilkColony.Id?options.spiderColor:effect==hole?hole.rimColor:glass.rimColor;}}
+    void UpdateSkillLabels(){
+        var entry=SkillLibrary.Find(selectedId);Get<TextBlock>("EffectTitle").Text=UiText.T(entry.title);
+        Get<TextBlock>("SkillHint").Text=entry.hint==""?"":UiText.T(entry.hint);
+        string caption=UiText.T(BodyColor?"Body color":"Edge glow");
+        Get<TextBlock>("PigmentCaption").Text=caption;Get<TextBlock>("PaletteTitle").Text=caption;
+        System.Windows.Automation.AutomationProperties.SetName(Get<Button>("ChooseRim"),caption);
+    }
     void PaintSwatch(){
-        int rgb=effect==hole?hole.rimColor:glass.rimColor;
+        int rgb=SelectedColor;
         Get<Border>("RimSwatch").Background=new SolidColorBrush(System.Windows.Media.Color.FromRgb((byte)(rgb>>16),(byte)(rgb>>8),(byte)rgb));
         Get<TextBlock>("RimHex").Text="#"+rgb.ToString("X6");
     }
     void ShowEffect(string id){
         selecting=true;
         try{
-            bool useHole=id==BlackHole.Id,useInk=id==InkSplash.Id;selectedId=useInk?InkSplash.Id:useHole?BlackHole.Id:Project.Id;
-            preview.Stop();effect.Clear();effect=useInk?(IKeyEffect)ink:useHole?(IKeyEffect)hole:glass;
-            Get<ImageView>("LivePreview").Source=null;Get<TextBlock>("EffectTitle").Text=UiText.T(EffectName);
-            Get<RadioButton>(useInk?"InkTile":useHole?"HoleTile":"GlassTile").IsChecked=true;
+            bool useHole=id==BlackHole.Id,useInk=id==InkSplash.Id;
+            var entry=SkillLibrary.Find(id)??SkillLibrary.Entries[0];selectedId=entry.id;
+            preview.Stop();effect.Clear();effect=library.Select(selectedId);if(fps>0)effect.Budget.SetRate(fps);
+            Get<ImageView>("LivePreview").Source=null;UpdateSkillLabels();
+            var tile=Get<RadioButton>(entry.tile);tile.IsChecked=true;
+            foreach(RadioButton tab in Get<Panel>("CategoryTabs").Children)
+                if((string)tab.Tag==((Panel)tile.Parent).Name){tab.IsChecked=true;break;}
             Get<StackPanel>("GlassPanel").Visibility=effect==glass?Visibility.Visible:Visibility.Collapsed;
             Get<StackPanel>("HolePanel").Visibility=useHole?Visibility.Visible:Visibility.Collapsed;
+            ShowWeatherControls();
+            Get<StackPanel>("FusePanel").Visibility=selectedId==VoxelFuse.Id?Visibility.Visible:Visibility.Collapsed;
             Get<StackPanel>("InkPanel").Visibility=useInk?Visibility.Visible:Visibility.Collapsed;
-            Get<Grid>("RimRow").Visibility=useInk?Visibility.Collapsed:Visibility.Visible;
+            Get<Grid>("RimRow").Visibility=effect==glass||useHole||BodyColor?Visibility.Visible:Visibility.Collapsed;
+            Get<StackPanel>("SkillPanel").Visibility=entry.hint==""?Visibility.Collapsed:Visibility.Visible;
+            var toggle=Get<CheckBox>("Enhanced");toggle.Visibility=useInk||useHole?Visibility.Visible:Visibility.Collapsed;
+            toggle.IsChecked=useHole?options.holeEnhanced:options.inkEnhanced;
+            var spectrum=Get<CheckBox>("Spectrum");spectrum.Visibility=selectedId==Tendrils.Id?Visibility.Visible:Visibility.Collapsed;spectrum.IsChecked=options.rainbow;
             PaintSwatch();
         }finally{selecting=false;}
+    }
+    void UpdateFuseLabel(){
+        Get<TextBlock>("FuseDurationValue").Text=(library.Fuse.fuseMs/1000.0).ToString("0.00")+" s";
+    }
+    void SaveFuseDelay(){
+        if(options.fuseMs==library.Fuse.fuseMs)return;
+        try{
+            var next=SkillOptions.Read();
+            next.fuseMs=library.Fuse.fuseMs;
+            next.Save();
+            options=next;
+            Host.NotifySettings();
+            Note(UiText.T("Settings saved."));
+        }catch(Exception error){
+            Get<Slider>("FuseDuration").Value=options.fuseMs;
+            Note(error.Message);
+        }
     }
     void UpdateInkLabels(){
         Get<TextBlock>("SprayNum").Text=ink.tuning.spread+"%";Get<TextBlock>("DryNum").Text=(ink.tuning.recovery/1000.0).ToString("0.0")+" s";
     }
     void SaveSettings(){
+        if(effect is WeatherScene){SaveWeather();return;}
+        if(effect==library.Fuse){SaveFuseDelay();return;}
         if(effect==hole){Project.Atomic(Project.HolePowerPath,hole.power.ToString());holeDirty=false;}
         else if(effect==ink){ink.tuning.Save();inkDirty=false;}
-        else{Project.SaveTuning(glass.tuning);dirty=false;}
+        else if(effect==glass){Project.SaveTuning(glass.tuning);dirty=false;}
         Host.NotifySettings();
     }
     void UpdateTuning(){var t=glass.tuning;t.density=(int)Get<Slider>("Density").Value;t.spread=(int)Get<Slider>("Spread").Value;t.heal=(int)Get<Slider>("Heal").Value;
         t.delay=(int)Get<Slider>("Delay").Value;t.crackSize=Get<RadioButton>("SmallCracks").IsChecked==true?1:0;
         Get<TextBlock>("DelayNum").Text=(t.delay/1000.0).ToString("0.0")+" s";
         Get<TextBlock>("DensityNum").Text=t.density+"%";Get<TextBlock>("SpreadNum").Text=t.spread+"%";Get<TextBlock>("HealNum").Text=(t.heal/1000.0).ToString("0.00")+" s";}
-    void UpdateRate(){Get<TextBlock>("Rate").Text=fps+" FPS";preview.Interval=TimeSpan.FromMilliseconds(Math.Ceiling(1000.0/fps));}
+    void UpdateRate(){effect.Budget.SetRate(fps);Get<TextBlock>("Rate").Text=fps+" FPS";preview.Interval=TimeSpan.FromMilliseconds(Math.Ceiling(1000.0/fps));}
     LayoutKey PreviewKey(KeyEventArgs e){
         var key=e.Key==Key.System?e.SystemKey:e.Key;uint vk=MapVirtualKey((uint)KeyInterop.VirtualKeyFromKey(key),4);
         int scan=(int)(vk&255)+((vk>>8)==0xe0?256:0);LayoutKey k;return glass.scans.TryGetValue(scan,out k)?k:null;
     }
-    void TestHit(LayoutKey k){effect.Strike(k);PreviewFrame();preview.Start();}
+    void TestHit(LayoutKey k){effect.Strike(k);if(!preview.IsEnabled){PreviewFrame();if(effect.Active)preview.Start();}}
     void ReleasePreview(LayoutKey key){effect.Release(key);if(effect.Active&&!preview.IsEnabled)preview.Start();}
+    static BitmapSource FrozenBitmap(Bitmap bmp){
+        var bits=bmp.LockBits(new Rectangle(0,0,bmp.Width,bmp.Height),ImageLockMode.ReadOnly,System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+        try{var src=BitmapSource.Create(bmp.Width,bmp.Height,96,96,PixelFormats.Pbgra32,null,bits.Scan0,bits.Stride*bmp.Height,bits.Stride);src.Freeze();return src;}
+        finally{bmp.UnlockBits(bits);}
+    }
+    void SetBoardBackdrop(){
+        boardWorld=KeyboardStage.World(glass.data);
+        if(boardBackdrop!=null)boardBackdrop.Dispose();
+        if(previewCover!=null){previewCover.Dispose();previewCover=null;}
+        boardBackdrop=KeyboardStage.Create(glass.data,boardWorld);
+        var plane=Get<Canvas>("BoardPlane");plane.Width=boardWorld.Width;plane.Height=boardWorld.Height;
+        var cover=Get<ImageView>("Cover");cover.Width=boardWorld.Width;cover.Height=boardWorld.Height;cover.Source=FrozenBitmap(boardBackdrop);
+        var image=Get<ImageView>("LivePreview");image.Width=boardWorld.Width;image.Height=boardWorld.Height;
+    }
     void PreviewFrame(){
-        var target=Get<ImageView>("LivePreview");var hero=Get<Grid>("Hero");int w=Math.Max(1,(int)hero.ActualWidth),h=Math.Max(1,(int)hero.ActualHeight);
-        if(effect.Bounds(w,h).IsEmpty){preview.Stop();target.Source=null;return;}
+        double started=previewClock.Elapsed.TotalMilliseconds;
+        var target=Get<ImageView>("LivePreview");var hero=Get<Grid>("Hero");double fit=Math.Min(1,Math.Min(hero.ActualWidth/boardWorld.Width,hero.ActualHeight/boardWorld.Height));
+        int w=Math.Max(1,(int)(1920*fit)),h=Math.Max(1,(int)(720*fit));
+        var skill=effect as SkillScene;if(skill!=null)skill.RenderWorld=boardWorld;
+        if(effect.Bounds(w,h).IsEmpty&&(skill==null||!skill.Active)){preview.Stop();target.Source=null;return;}
         if(previewCover==null||previewCover.Width!=w||previewCover.Height!=h){
             if(previewCover!=null)previewCover.Dispose();
-            using(var cover=new Bitmap(Path.Combine(Project.Base,"cover.jpg")))previewCover=new Bitmap(cover,w,h);
+            using(var crop=boardBackdrop.Clone(new Rectangle(-boardWorld.X,-boardWorld.Y,1920,720),boardBackdrop.PixelFormat))previewCover=new Bitmap(crop,w,h);
         }
-        using(var bmp=new Bitmap(w,h,System.Drawing.Imaging.PixelFormat.Format32bppPArgb)){using(var g=Graphics.FromImage(bmp)){
+        float sx=w/1920f,sy=h/720f;
+        int pw=Math.Max(1,(int)Math.Round(boardWorld.Width*sx)),ph=Math.Max(1,(int)Math.Round(boardWorld.Height*sy));
+        if(previewPixels==null||previewPixels.Width!=pw||previewPixels.Height!=ph){
+            if(previewPixels!=null)previewPixels.Dispose();
+            previewPixels=new Bitmap(pw,ph,System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+            previewImage=new WriteableBitmap(pw,ph,96,96,PixelFormats.Pbgra32,null);
+        }
+        using(var g=Graphics.FromImage(previewPixels)){
+            g.Clear(System.Drawing.Color.Transparent);g.TranslateTransform(-boardWorld.X*sx,-boardWorld.Y*sy);
             effect.Draw(g,w,h,0,0,previewCover,new Rectangle(0,0,w,h));
         }
-            var area=bmp.LockBits(new Rectangle(0,0,w,h),ImageLockMode.ReadOnly,System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
-            try{var src=BitmapSource.Create(w,h,96,96,PixelFormats.Pbgra32,null,area.Scan0,area.Stride*h,area.Stride);src.Freeze();target.Source=src;}finally{bmp.UnlockBits(area);}}
+        var bits=previewPixels.LockBits(new Rectangle(0,0,pw,ph),ImageLockMode.ReadOnly,previewPixels.PixelFormat);
+        try{previewImage.WritePixels(new Int32Rect(0,0,pw,ph),bits.Scan0,bits.Stride*ph,bits.Stride);}
+        finally{previewPixels.UnlockBits(bits);}
+        if(target.Source!=previewImage)target.Source=previewImage;
+        double workMs=previewClock.Elapsed.TotalMilliseconds-started;
+        effect.Budget.Observe(workMs);
+        var interval=TimeSpan.FromMilliseconds(Math.Ceiling(Math.Max(1000.0/Math.Max(1,fps),workMs+effect.Budget.RestAfter(workMs))));
+        if(preview.Interval!=interval)preview.Interval=interval;
         if(effect==hole&&hole.Parked)preview.Stop();
     }
     static List<Output> Choices(OutputChoice saved){
@@ -327,6 +449,17 @@ internal sealed partial class Studio
             anchor.ContextMenu=menu;menu.IsOpen=true;
         }catch(Exception e){if(forVideo)Get<TextBlock>("VideoStatus").Text=e.Message;else Note(e.Message);}
     }
+    void UpdateBoundaryButton(Output pick,List<Output> outputs){
+        var button=Get<System.Windows.Controls.Primitives.ToggleButton>("CursorBoundary");
+        boundaryId=KeyboardScreen.Eligible(pick,outputs)?pick.Id:null;
+        button.Visibility=boundaryId==null?Visibility.Collapsed:Visibility.Visible;
+        if(boundaryId==null)return;
+        bool block=KeyboardScreen.Blocked(boundaryId);
+        button.IsChecked=block;
+        string help=UiText.T(block?"Pointer entry blocked. Click to allow.":"Pointer entry allowed. Click to block.");
+        button.ToolTip=help;
+        System.Windows.Automation.AutomationProperties.SetHelpText(button,help);
+    }
     void Refresh(){
         try{
             var saved=Project.ReadChoice();var screens=Choices(saved);
@@ -345,7 +478,8 @@ internal sealed partial class Studio
                 preferred?UiText.T("Effects sample the live wallpaper. Casting temporarily switches the source to video."):UiText.T("Wallpaper sampling is off.");
             var live=screens.FirstOrDefault(x=>Same(x.Id,saved.Id));
             var pick=screens.FirstOrDefault(x=>Same(x.Id,pendingId??saved.Id));
-            if(glass.geometry.Sync(castingTarget!=null?castingTarget.Id:pick==null?null:pick.Id)){effect.Clear();Get<ImageView>("LivePreview").Source=null;}
+            UpdateBoundaryButton(pick,screens);
+            if(glass.geometry.Sync(castingTarget!=null?castingTarget.Id:pick==null?null:pick.Id)){effect.Clear();Get<ImageView>("LivePreview").Source=null;SetBoardBackdrop();}
             bool current=pick!=null&&Same(pick.Id,saved.Id);
             targetButton.Content=(pick==null?UiText.T("Select display"):pick.ToString())+"  ▾";
             targetButton.ToolTip=UiText.T("Choose a display for keyboard effects");
@@ -355,7 +489,7 @@ internal sealed partial class Studio
             Get<TextBlock>("DisplayState").Text=state;
             applyButton.Content=current&&saved.Enabled?UiText.T("Pause effects"):saved.Enabled?UiText.T("Use this display"):UiText.T("Enable effects");
             applyButton.IsEnabled=pick!=null&&((current&&saved.Enabled)||pick.Usable||(current&&!pick.Mirrored));
-        }catch(Exception e){applyButton.IsEnabled=false;Note(e.Message);}
+        }catch(Exception e){UpdateBoundaryButton(null,null);applyButton.IsEnabled=false;Note(e.Message);}
     }
     void Apply(){
         try{

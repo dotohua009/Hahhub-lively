@@ -7,14 +7,14 @@ using System.Windows.Media;
 using System.Windows.Automation;
 
 internal sealed partial class Studio {
-    double hue,saturation,brightness;bool painting,editingHole;int chosenColor;
+    double hue,saturation,brightness;bool painting;int chosenColor;
     void OpenEditor(string panel){
         Get<Grid>("ShellContent").IsEnabled=false;
         Get<StackPanel>(panel).Visibility=Visibility.Visible;Get<Grid>("EditorShade").Visibility=Visibility.Visible;
     }
     void CloseEditor(){
         bool color=Get<StackPanel>("PalettePanel").IsVisible;
-        if(guide!=null){guide.Dispose();guide=null;Host.NotifySettings();}
+        if(guide!=null){guide.Dispose();guide=null;Host.NotifySettings();if(cursorBoundary!=null)cursorBoundary.Refresh();}
         Get<Grid>("EditorShade").Visibility=Visibility.Collapsed;
         foreach(var p in new[]{"PalettePanel","AlignmentPanel"})Get<StackPanel>(p).Visibility=Visibility.Collapsed;
         Get<Grid>("ShellContent").IsEnabled=true;Get<Button>(color?"ChooseRim":"Calibrate").Focus();
@@ -46,7 +46,7 @@ internal sealed partial class Studio {
     }
     void ColorIsValid(bool valid){Get<TextBlock>("ColorError").Visibility=valid?Visibility.Collapsed:Visibility.Visible;Get<Button>("ApplyColor").IsEnabled=valid;}
     void ChooseRim(){
-        editingHole=effect==hole;FromRgb(editingHole?hole.rimColor:glass.rimColor);
+        FromRgb(SelectedColor);
         Get<TextBlock>("PaletteEffect").Text=UiText.T(EffectName);
         OpenEditor("PalettePanel");window.UpdateLayout();PaintColor(true);Get<Grid>("ColorField").Focus();
     }
@@ -70,9 +70,18 @@ internal sealed partial class Studio {
         }
         Get<Button>("CancelColor").Click+=delegate{CloseEditor();};
         Get<Button>("ApplyColor").Click+=delegate{
-            try{Project.SaveRim(editingHole,chosenColor);}catch(Exception err){Get<TextBlock>("ColorError").Text=err.Message;Get<TextBlock>("ColorError").Visibility=Visibility.Visible;return;}
-            if(editingHole)hole.rimColor=chosenColor;else glass.rimColor=chosenColor;
-            CloseEditor();PaintSwatch();Host.NotifySettings();var key=glass.scans[33];TestHit(key);ReleasePreview(key);Note(UiText.T("Edge glow saved."));
+            try{
+                if(BodyColor){
+                    var next=SkillOptions.Read();
+                    if(selectedId==Tendrils.Id){next.tendrilColor=chosenColor;next.rainbow=false;}else next.spiderColor=chosenColor;
+                    next.Save();options=next;library.Configure(next);Get<CheckBox>("Spectrum").IsChecked=next.rainbow;
+                }else{
+                    Project.SaveRim(effect==hole,chosenColor);
+                    if(effect==hole)hole.rimColor=chosenColor;else glass.rimColor=chosenColor;
+                }
+            }catch(Exception err){Get<TextBlock>("ColorError").Text=err.Message;Get<TextBlock>("ColorError").Visibility=Visibility.Visible;return;}
+
+            CloseEditor();PaintSwatch();Host.NotifySettings();var key=glass.scans[33];TestHit(key);ReleasePreview(key);Note(UiText.T(BodyColor?"Color saved.":"Edge glow saved."));
         };
         hex.KeyDown+=(o,e)=>{if(e.Key==Key.Enter&&Get<Button>("ApplyColor").IsEnabled){Get<Button>("ApplyColor").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));e.Handled=true;}};
     }
