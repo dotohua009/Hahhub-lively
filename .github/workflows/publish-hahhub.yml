@@ -1,0 +1,37 @@
+name: Publish hahhub 1.1.0
+on:
+  push:
+    branches: ['release-assets/v1.1.0']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_COMMIT: e092c52a02fd2b303459400efc57714194a9f6e5
+    steps:
+      - name: Verify and publish the Windows update
+        run: |
+          set -euo pipefail
+          base="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$RELEASE_COMMIT/downloads/hahhub"
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 2 --output update.json "$base/update.json"
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 2 --output hahhub-windows-x64.zip "$base/v1.1.0/hahhub-windows-x64.zip"
+          jq -e '.product == "hahhub" and .version == "1.1.0" and .sha256 == "06cd86f98612ef33094b073570788ea9f0f4177504b70a3ed63974d81963458a"' update.json >/dev/null
+          test "$(stat -c %s hahhub-windows-x64.zip)" = "$(jq -r .bytes update.json)"
+          echo "$(jq -r .sha256 update.json)  hahhub-windows-x64.zip" | sha256sum --check
+          cat > release-notes.md <<'NOTES'
+          **Windows x64** · Download `hahhub-windows-x64.zip` below, or open **Settings → Updates** in an existing installation.
+          
+          - The library now has 11 effects across Materials, Weather, Creatures and Energy.
+          - Glitter Flow moves across the whole keyboard toward recent keystrokes. Its surface reflects the background and its flakes flash as they turn.
+          - Frost Fog rolls off the entire keycap. Frost Lance sprouts at a few random points along its edge, then grows outward in uneven clusters while held. Snowdrift banks snow between keys.
+          - Tendrils respond to nearby keys. Silk Colony weaves its web over time. Prism follows your calibrated keycap and switch, and Voxel Fuse supports a configurable chain-reaction delay.
+          - Each effect has a rendering budget. The keyboard-display cursor boundary is enabled by default on recognized keyboard displays.
+          
+          **简体中文** · 从下方下载 Windows 压缩包，或在「设置 → 软件更新」升级。效果库扩为材质、气象、生物、能量四类，共 11 项。流麻随击键重心流动并反射背景，霜雾从整块键帽散开。冰刺从边缘随机位置分簇向外长，长按时长短、粗细和间距各异。方块连爆可调整引信时间。
+          
+          Verified with the software preview and the 1.0.6 updater. Actual frame rate depends on the display and background.
+          NOTES
+          gh release create v1.1.0 hahhub-windows-x64.zip update.json --repo "$GITHUB_REPOSITORY" --target "$RELEASE_COMMIT" --title 'hahhub 1.1.0' --notes-file release-notes.md --latest
