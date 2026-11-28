@@ -4,6 +4,16 @@ hahhub turns a transparent keyboard display into a live surface for your keystro
 
 [Download for Windows x64](https://github.com/dotohua009/Hahhub-lively/releases/latest/download/hahhub-windows-x64.zip) · [Releases](https://github.com/dotohua009/Hahhub-lively/releases) · [Source and build instructions](hahhub/) · [简体中文](#简体中文)
 
+## PowerShell 一行安装 · Windows x64
+
+打开 PowerShell，复制下面一行，粘贴后按回车。安装完成后，从桌面打开 **hahhub**。手动升级前，先从托盘退出旧版。
+
+Paste this line into PowerShell and press Enter. It downloads the current release, verifies the package and installs it for your Windows user.
+
+```powershell
+irm https://raw.githubusercontent.com/dotohua009/Hahhub-lively/main/install.ps1 | iex
+```
+
 ![Weather library in hahhub with Frost Fog running in the software preview](docs/hahhub-studio.png)
 
 ## Effects and video
